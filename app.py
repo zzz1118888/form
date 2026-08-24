@@ -72,6 +72,7 @@ def generate_answers(questions, persona, total_count):
         1. 保持人設一致：對於選擇題或判斷題，請根據你已經設定的背景資訊（如專業、年齡、對特定工具的看法）來推斷並填寫最合理的選項文字。
         2. 無關題目隨機化：如果該題與設定的方向或之前填寫的資訊無關，請直接隨機生成一個常理下合理的答案或選項。
         3. 鍵值匹配：返回的 JSON 鍵值(Key)必須「完全等於」上述列表中的題目名稱，一字不差，絕對不要自己縮寫或加上題號。
+        4. 選擇題極度嚴格：請務必猜測該題目的可能選項，並僅輸出一個選項文字。
         
         請以 JSON 陣列格式返回，每個元素代表一份問卷的答案。絕對不要輸出任何解釋文字，只需輸出標準的 JSON 陣列格式。
         """
@@ -104,12 +105,12 @@ def generate_answers(questions, persona, total_count):
     status_text.text(f"✅ AI 數據生成完畢！共準備好 {len(all_answers)} 份資料。")
     return all_answers
 
-# ================= 模組三：並發提交模組 (智慧容錯防空缺版) =================
+# ================= 模組三：並發提交模組 (除錯抓漏版) =================
 def submit_form(form_url, parsed_questions, answers):
     post_url = form_url.replace("/viewform", "/formResponse")
     success_count = 0
     
-    for answer_set in answers:
+    for idx, answer_set in enumerate(answers):
         payload = {}
         for q in parsed_questions:
             q_title = q['title']
@@ -129,6 +130,11 @@ def submit_form(form_url, parsed_questions, answers):
             res = requests.post(post_url, data=payload)
             if res.status_code == 200:
                 success_count += 1
+            else:
+                # 🚨 新增除錯功能：如果失敗，把 AI 組合出來的答案印在畫面上
+                st.error(f"第 {idx+1} 份問卷被 Google 拒絕！(狀態碼: {res.status_code})")
+                st.warning("請檢查以下 AI 生成的答案，是否與表單選擇題的選項「一字不差」：")
+                st.json(answer_set) # 將 AI 回傳的原始 JSON 印出來對照
         else:
             st.warning("攔截到一份空數據，未提交至表單。")
             
@@ -149,8 +155,8 @@ with st.form("auto_form"):
     
     persona = st.text_area(
         "填寫方向與偏好設定", 
-        value="希望專業多元一點，年齡是大學生，然後對 rightpick JUPAS 選科輔助工具的評價很高，認為解決了升學痛點",
-        height=100
+        value="希望專業多元一點，年齡是大學生，然後對 rightpick JUPAS 選科輔助工具的評價很高，認為解決了升學痛點。\n\n⚠️ 如果問卷中有選擇題（例如「你是否學過編程?」），請嚴格回答「是」或「否」，不要加上其他文字。",
+        height=120
     )
     
     target_count = st.number_input("需要生成的問卷數量", min_value=1, max_value=500, value=3)
@@ -166,22 +172,22 @@ if submitted:
     else:
         with st.status("任務執行中...", expanded=True) as status:
             try:
-                st.write("正在解析表單結構並繞過防護機制...")
+                st.write("🔍 正在解析表單結構並繞過防護機制...")
                 questions = parse_google_form(form_url)
                 st.write(f"✅ 成功解析出 {len(questions)} 道題目！")
                 
-                st.write(" 正在呼叫 AI 分批生成模擬數據...")
+                st.write("🧠 正在呼叫 AI 分批生成模擬數據...")
                 answers = generate_answers(questions, persona, target_count)
                 
                 if len(answers) > 0:
-                    st.write("正在併發提交至 Google 伺服器...")
+                    st.write("🚀 正在併發提交至 Google 伺服器...")
                     success_count = submit_form(form_url, questions, answers)
                     
                     if success_count > 0:
                         status.update(label=f"任務完成！成功提交 {success_count}/{target_count} 份問卷。", state="complete", expanded=False)
                         st.balloons()
                     else:
-                        status.update(label="提交失敗，請檢查資料格式是否被表單阻擋。", state="error")
+                        status.update(label="提交失敗，請檢查下方紅框中的資料格式錯誤。", state="error")
                 else:
                     status.update(label="未成功生成任何數據，請檢查 AI 回傳結果。", state="error")
                     
