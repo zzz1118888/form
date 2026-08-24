@@ -66,7 +66,7 @@ def generate_answers(questions, persona, count):
     """
     
     response = CLIENT.chat.completions.create(
-        model="glm-4",
+        model="glm-4-flash",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.8
     )
