@@ -1,2 +1,5 @@
 requests
 zhipuai
+sniffio
+httpx
+pydantic
