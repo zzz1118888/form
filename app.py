@@ -63,7 +63,7 @@ def parse_google_form(form_url):
 # ================= 模組二：智譜 API 策略引擎 =================
 def generate_answers(questions, persona, total_count):
     all_answers = []
-    batch_size = 5 
+    batch_size = 1
     progress_bar = st.progress(0)
     status_text = st.empty()
     
