@@ -10,7 +10,7 @@ from zhipuai import ZhipuAI
 ZHIPU_API_KEY = "2040bad6a4de457db8783082ea9120bc.FDSw7nPPtfv8KCaD"
 CLIENT = ZhipuAI(api_key=ZHIPU_API_KEY)
 
-# ================= 模組一：自動解析表單 =================
+# ================= 模組一：自動解析表單與權杖 =================
 def parse_google_form(form_url):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -24,7 +24,6 @@ def parse_google_form(form_url):
     match = re.search(r'var FB_PUBLIC_LOAD_DATA_ = (\[.*?\]);\n', response.text, re.DOTALL)
     if not match:
          match = re.search(r'var FB_PUBLIC_LOAD_DATA_ = (\[.*?\]);</script>', response.text, re.DOTALL)
-         
     if not match:
         raise ValueError(f"找不到表單資料，可能被防爬蟲機制擋下。")
 
@@ -59,7 +58,12 @@ def parse_google_form(form_url):
     except (IndexError, TypeError) as e:
         raise ValueError(f"解析題目結構失敗：{e}")
         
-    return parsed_questions
+    fbzx_token = None
+    fbzx_match = re.search(r'name="fbzx".*?value="(.*?)"', response.text)
+    if fbzx_match:
+        fbzx_token = fbzx_match.group(1)
+        
+    return parsed_questions, fbzx_token
 
 # ================= 模組二：智譜 API 策略引擎 =================
 def generate_answers(questions, persona, total_count):
@@ -82,12 +86,11 @@ def generate_answers(questions, persona, total_count):
         
         【填寫邏輯規則】：
         1. 保持人設一致：請根據背景資訊推斷。
-        2. 鍵值匹配：返回的 JSON 鍵值(Key)必須「完全等於」上述列表中的題目名稱。如果是「主題目 - 子題目」的格式，請直接作為一個完整的 Key。
+        2. 鍵值匹配：返回的 JSON 鍵值(Key)必須「完全等於」上述列表中的題目名稱。
         3. 請以 JSON 陣列格式返回。絕對不要輸出任何解釋文字。
         """
         
         max_retries = 3
-        success = False
         
         for attempt in range(max_retries):
             try:
@@ -107,7 +110,6 @@ def generate_answers(questions, persona, total_count):
                     
                 if isinstance(batch_answers, list):
                     all_answers.extend(batch_answers)
-                    success = True
                     break 
                 else:
                     raise ValueError("JSON 格式不是陣列或字典")
@@ -116,10 +118,10 @@ def generate_answers(questions, persona, total_count):
                 error_msg = str(e)
                 if attempt < max_retries - 1:
                     wait_time = 3 + attempt * 2 
-                    st.warning(f"⚠️ 智譜伺服器暫時無回應，{wait_time} 秒後進行第 {attempt+2} 次重試...")
+                    st.warning(f"⚠️ 智譜伺服器暫時無回應，{wait_time} 秒後重試...")
                     time.sleep(wait_time)
                 else:
-                    st.error(f"❌ 第 {i+1} 份生成連續失敗 {max_retries} 次，已略過。錯誤詳情：{error_msg}")
+                    st.error(f"❌ 第 {i+1} 份生成連續失敗，已略過。錯誤詳情：{error_msg}")
         
         current_progress = min(1.0, (i + current_count) / total_count)
         progress_bar.progress(current_progress)
@@ -128,8 +130,8 @@ def generate_answers(questions, persona, total_count):
     status_text.text(f"✅ AI 數據生成完畢！共準備好 {len(all_answers)} 份資料。")
     return all_answers
 
-# ================= 模組三：並發提交模組 (分頁修復版) =================
-def submit_form(form_url, parsed_questions, answers, duration_hours):
+# ================= 模組三：並發提交模組 (學生與畢業生邏輯隔離版) =================
+def submit_form(form_url, parsed_questions, fbzx_token, answers, duration_hours):
     post_url = form_url.replace("/viewform", "/formResponse")
     success_count = 0
     total_seconds = duration_hours * 3600
@@ -138,10 +140,11 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
     
     for idx, answer_set in enumerate(answers):
         payload = {}
-        # 🔥 真正殺招：告訴 Google 我們 7 頁全部跑完了，請觸發「最終提交」！
         payload['pageHistory'] = "0,1,2,3,4,5,6" 
         
-        # 拍扁 JSON，同時清洗不合法的陣列格式
+        if fbzx_token:
+            payload['fbzx'] = fbzx_token
+        
         flat_answers = {}
         for key, value in answer_set.items():
             if isinstance(value, dict):
@@ -158,15 +161,14 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
         if "Year" in grade_str or "大" in grade_str:
             is_student = True
             
-        # 比對並提取答案
         for q in parsed_questions:
             q_title = q['title']
             
-            # 🚨 身分隔離機制：如果是學生，跳過畢業生專屬題目
+            # 🔥 身份防火牆：如果是學生，直接封殺所有帶有「畢業生」的題目
             if is_student and "畢業生" in q_title:
-                # 【例外保護】：五大職業這題是全體必填，不能跳過！
-                if "五大職業" not in q_title:
-                    continue
+                if "五大職業" in q_title:
+                    payload[q['entry_id']] = "NA" # 只有這題因為帶星號必填，強制給 NA
+                continue # 其他的畢業生題目（包含0-10評分矩陣），直接跳過，絕對不填！
                 
             answer_val = None
             if q_title in flat_answers:
@@ -179,43 +181,39 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                         answer_val = ai_val
                         break
             
-            # 檢查並修正 AI 填寫的內容
-            if answer_val is not None:
+            # 有找到答案的處理
+            if answer_val is not None and str(answer_val).strip() != "":
                 answer_str = str(answer_val)
-                # 攔截包含括號 [] 的殘餘字串 (AI 常犯錯誤)
                 if answer_str.startswith("[") and answer_str.endswith("]"):
                     answer_str = "NA"
                 
-                # 攔截 W, S, C 等幻覺字母
                 if re.search(r'\([WSCIRE]\)', q_title):
                     if not answer_str.isdigit():  
                         answer_str = str(random.randint(4, 8))
                 
-                # 強制修正格式
                 if "入學年份" in q_title and answer_str not in ["2023", "2024", "2025", "2026", "其他:"]:
                     answer_str = random.choice(["2023", "2024", "2025", "2026"])
                 if "年級" in q_title and answer_str not in ["Year 1", "Year 2", "Year 3", "Year 4", "其他:"]:
                     answer_str = random.choice(["Year 1", "Year 2", "Year 3", "Year 4"])
                 
-                # 若是學生，強制把五大職業這題變成 NA
-                if is_student and "五大職業" in q_title:
-                    answer_str = "NA"
-                
                 payload[q['entry_id']] = answer_str
             
             else:
-                # 🛡️ 補救機制：漏題自動填寫 (防止必填被跳過)
+                # 🛡️ 補漏機制（這時已經排除了學生錯填畢業生題目的可能）
                 if "(0" in q_title and "10" in q_title:
                     payload[q['entry_id']] = str(random.randint(4, 8))
                 elif "兄弟姊妹數目" in q_title:
                     payload[q['entry_id']] = str(random.choice([0, 1, 2]))
-                elif "五大職業" in q_title:
-                    payload[q['entry_id']] = "NA"
+                elif "DSE成績" in q_title:
+                    payload[q['entry_id']] = str(random.randint(3, 5))
                 elif re.search(r'\([WSCIRE]\)', q_title):
                     payload[q['entry_id']] = str(random.randint(4, 8))
-                # 🔥 補漏殺招：強制補齊 DSE 核心科目，防止矩陣隱藏必填報錯
-                elif "DSE成績" in q_title and any(subj in q_title for subj in ["中國語文", "英國語文", "數學", "通識教育"]):
-                    payload[q['entry_id']] = str(random.randint(3, 5))
+                elif "五大職業" in q_title:
+                    payload[q['entry_id']] = "NA"
+                elif "月薪" in q_title or "收入" in q_title:
+                    payload[q['entry_id']] = "20000"
+                elif "時間" in q_title or "經驗" in q_title or "就業率" in q_title:
+                    payload[q['entry_id']] = "1"
 
         if len(payload) > 1:
             res = requests.post(post_url, data=payload)
@@ -224,7 +222,17 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 success_count += 1
             else:
                 st.error(f"第 {idx+1} 份問卷遭遇「假成功」！(資料被 Google 退件)")
-                with st.expander("點擊查看被退件的資料詳情（請檢查是否還有必填欄位漏掉）"):
+                
+                # 自動化 Google 報錯翻譯機
+                error_msgs = re.findall(r'data-error-message="([^"]+)"', res.text)
+                error_msgs = list(set([e for e in error_msgs if e.strip()]))
+                
+                if error_msgs:
+                    st.warning(f"🚨 抓到 Google 拒絕的原因了！表單提示：【 {', '.join(error_msgs)} 】")
+                else:
+                    st.warning("🚨 Google 退回了資料，但沒有給出具體的必填錯誤提示。")
+                    
+                with st.expander("點擊查看被退件的資料詳情"):
                     st.json(payload) 
         else:
             st.warning("攔截到一份空數據，未提交至表單。")
@@ -245,7 +253,6 @@ st.set_page_config(page_title="自動問卷生成系統", page_icon="🤖")
 st.title("🤖 Google Form 自動填寫系統")
 st.markdown("輸入 Google 表單連結與目標人設，系統將自動生成並批量提交資料。")
 
-# 這裡是最乾淨、不會產生引號和陣列的 Prompt
 default_persona = """你現在是一位香港八大院校的受訪者，正在填寫一份關於升學與職涯意向的大型深度調查問卷。
 
 【重要身分設定】：
@@ -264,8 +271,7 @@ default_persona = """你現在是一位香港八大院校的受訪者，正在�
 2. 【入學年份】只能選擇輸出：2023、2024、2025 或 2026。
 3. 【年級】只能選擇輸出：Year 1、Year 2、Year 3 或 Year 4。
 4. ⚠️「畢業生五大職業(不清楚請填NA)」：請直接填寫字串 "NA"，絕對不可以輸出陣列或括號。
-5. [畢業生填寫] 相關問題：若身分是大學生，請【直接省略該 Key，不要出現在 JSON 中】。
-6. DSE成績評分矩陣：為核心及隨機2科選修填寫「1」到「5**」。沒修讀的【直接省略該 Key】。
+5. DSE成績評分矩陣：為所有科目隨機填寫「3」到「5**」。
 """
 
 with st.form("auto_form"):
@@ -284,17 +290,19 @@ if submitted:
     else:
         with st.status("任務執行中...", expanded=True) as status:
             try:
-                st.write("🔍 正在解析表單結構...")
-                questions = parse_google_form(form_url)
+                st.write("🔍 正在解析表單結構與防偽造權杖...")
+                questions, fbzx_token = parse_google_form(form_url)
                 
                 st.write(f"✅ 成功解析出 {len(questions)} 道題目！")
+                if fbzx_token:
+                    st.write("✅ 成功竊取 Google 防偽造 Session 權杖！")
                 
                 st.write("🧠 正在呼叫 AI 生成模擬數據...")
                 answers = generate_answers(questions, persona, target_count)
                 
                 if len(answers) > 0:
                     st.write("🚀 正在啟動提交程序...")
-                    success_count = submit_form(form_url, questions, answers, duration_hours)
+                    success_count = submit_form(form_url, questions, fbzx_token, answers, duration_hours)
                     if success_count > 0:
                         status.update(label=f"任務完成！成功提交 {success_count}/{target_count} 份。", state="complete", expanded=False)
                         st.balloons()
