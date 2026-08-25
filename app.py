@@ -10,7 +10,7 @@ from zhipuai import ZhipuAI
 ZHIPU_API_KEY = "2040bad6a4de457db8783082ea9120bc.FDSw7nPPtfv8KCaD"
 CLIENT = ZhipuAI(api_key=ZHIPU_API_KEY)
 
-# ================= 模組一：自動解析表單 (終極網格題深度解析版) =================
+# ================= 模組一：自動解析表單 =================
 def parse_google_form(form_url):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -61,7 +61,7 @@ def parse_google_form(form_url):
         
     return parsed_questions
 
-# ================= 模組二：智譜 API 策略引擎 (加入 500 錯誤重試機制) =================
+# ================= 模組二：智譜 API 策略引擎 =================
 def generate_answers(questions, persona, total_count):
     all_answers = []
     batch_size = 1 
@@ -82,18 +82,17 @@ def generate_answers(questions, persona, total_count):
         
         【填寫邏輯規則】：
         1. 保持人設一致：請根據背景資訊推斷。
-        2. 鍵值匹配：返回的 JSON 鍵值(Key)必須「完全等於」上述列表中的題目名稱。
+        2. 鍵值匹配：返回的 JSON 鍵值(Key)必須「完全等於」上述列表中的題目名稱。如果是「主題目 - 子題目」的格式，請直接作為一個完整的 Key。
         3. 請以 JSON 陣列格式返回。絕對不要輸出任何解釋文字。
         """
         
-        # 🚨 加入重試機制：最多嘗試 3 次
         max_retries = 3
         success = False
         
         for attempt in range(max_retries):
             try:
                 response = CLIENT.chat.completions.create(
-                    model="glm-4-flash", # 如果還是狂當，可以把這裡換成 "glm-4"
+                    model="glm-4-flash",
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.8,
                     max_tokens=8192
@@ -109,14 +108,14 @@ def generate_answers(questions, persona, total_count):
                 if isinstance(batch_answers, list):
                     all_answers.extend(batch_answers)
                     success = True
-                    break # 成功了，跳出重試迴圈
+                    break 
                 else:
                     raise ValueError("JSON 格式不是陣列或字典")
                     
             except Exception as e:
                 error_msg = str(e)
                 if attempt < max_retries - 1:
-                    wait_time = 3 + attempt * 2 # 失敗越多次等越久 (3秒, 5秒...)
+                    wait_time = 3 + attempt * 2 
                     st.warning(f"⚠️ 智譜伺服器暫時無回應，{wait_time} 秒後進行第 {attempt+2} 次重試...")
                     time.sleep(wait_time)
                 else:
@@ -129,7 +128,7 @@ def generate_answers(questions, persona, total_count):
     status_text.text(f"✅ AI 數據生成完畢！共準備好 {len(all_answers)} 份資料。")
     return all_answers
 
-# ================= 模組三：並發提交模組 =================
+# ================= 模組三：並發提交模組 (終極拍扁整形版) =================
 def submit_form(form_url, parsed_questions, answers, duration_hours):
     post_url = form_url.replace("/viewform", "/formResponse")
     success_count = 0
@@ -141,12 +140,25 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
         payload = {}
         payload['pageHistory'] = "0,1,2,3,4,5,6" 
         
+        # 🚨 終極整形手術：把 AI 給的「嵌套字典」強制拍扁
+        flat_answers = {}
+        for key, value in answer_set.items():
+            if isinstance(value, dict):
+                # 如果是字典，就把裡面的子項目拆出來，加上主標題
+                for sub_key, sub_value in value.items():
+                    # 嘗試組合成 "主題目 - 子題目" 的格式
+                    flat_answers[f"{key} - {sub_key}"] = str(sub_value)
+            else:
+                flat_answers[key] = str(value)
+                
+        # 接下來的對應邏輯，改用我們拍扁後的 flat_answers
         for q in parsed_questions:
             q_title = q['title']
-            if q_title in answer_set:
-                payload[q['entry_id']] = answer_set[q_title]
+            
+            if q_title in flat_answers:
+                payload[q['entry_id']] = flat_answers[q_title]
             else:
-                for ai_key, ai_val in answer_set.items():
+                for ai_key, ai_val in flat_answers.items():
                     clean_q = re.sub(r'[^\w\s]', '', q_title)
                     clean_ai = re.sub(r'[^\w\s]', '', ai_key)
                     if clean_q and clean_ai and (clean_q in clean_ai or clean_ai in clean_q):
@@ -160,7 +172,7 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 success_count += 1
             else:
                 st.error(f"第 {idx+1} 份問卷遭遇「假成功」！(資料被 Google 退件)")
-                with st.expander("點擊查看被退件的資料詳情"):
+                with st.expander("點擊查看被退件的資料詳情（請檢查是否還有必填欄位漏掉）"):
                     st.json(payload) 
         else:
             st.warning("攔截到一份空數據，未提交至表單。")
