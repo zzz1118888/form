@@ -44,7 +44,7 @@ def parse_google_form(form_url):
                         
                         entry_id = f"entry.{sub_q[0]}"
                         
-                        # 嘗試抓出網格題的「子題目名稱」(例如: 動物、電腦科技、中國語文)
+                        # 嘗試抓出網格題的「子題目名稱」
                         sub_title = main_title
                         if len(sub_q) > 3 and isinstance(sub_q[3], list) and len(sub_q[3]) > 0:
                             sub_title = sub_q[3][0]
@@ -63,18 +63,19 @@ def parse_google_form(form_url):
 # ================= 模組二：智譜 API 策略引擎 =================
 def generate_answers(questions, persona, total_count):
     all_answers = []
-    batch_size = 1
+    # 🚨 關鍵修改：強制一次只生成 1 份，避免 JSON 字數過長導致破圖
+    batch_size = 1 
     progress_bar = st.progress(0)
     status_text = st.empty()
     
     for i in range(0, total_count, batch_size):
         current_count = min(batch_size, total_count - i)
-        status_text.text(f"⏳ 正在與 AI 溝通生成數據... (目前進度: {i}/{total_count})")
+        status_text.text(f"⏳ 正在與 AI 溝通生成數據... (目前進度: {i+1}/{total_count})")
         
         questions_str = "\n".join([f"- {q['title']}" for q in questions])
         prompt = f"""
         你現在是一個自動化數據生成引擎。我需要填寫一份問卷，請根據以下設定的方向/人設：【{persona}】
-        為我生成 {current_count} 份不同的問卷答案。
+        為我生成 {current_count} 份問卷答案。
         
         問卷題目如下：
         {questions_str}
@@ -84,7 +85,7 @@ def generate_answers(questions, persona, total_count):
         2. 鍵值匹配：返回的 JSON 鍵值(Key)必須「完全等於」上述列表中的題目名稱，一字不差，絕對不要自己縮寫或加上題號。
         3. 選擇題極度嚴格：請務必猜測該題目的可能選項，並僅輸出一個選項文字。
         
-        請以 JSON 陣列格式返回，每個元素代表一份問卷的答案。絕對不要輸出任何解釋文字，只需輸出標準的 JSON 陣列格式。
+        請以 JSON 陣列格式返回。絕對不要輸出任何解釋文字，只需輸出標準的 JSON 陣列格式。
         """
         
         try:
@@ -98,12 +99,16 @@ def generate_answers(questions, persona, total_count):
             result_text = result_text.replace("```json", "").replace("```", "").strip()
             batch_answers = json.loads(result_text)
             
+            # 🚨 關鍵修改：如果 AI 耍小聰明只回傳了單一物件，我們幫它套上陣列中括號
+            if isinstance(batch_answers, dict):
+                batch_answers = [batch_answers]
+                
             if isinstance(batch_answers, list):
                 all_answers.extend(batch_answers)
             else:
-                st.warning(f"第 {i+1} 批次資料格式有誤，已略過。")
+                st.warning(f"第 {i+1} 份資料格式有誤，已略過。")
         except Exception as e:
-            st.warning(f"第 {i+1} 批次生成發生錯誤，略過... ({str(e)})")
+            st.warning(f"第 {i+1} 份生成發生錯誤，略過... ({str(e)})")
             
         current_progress = min(1.0, (i + current_count) / total_count)
         progress_bar.progress(current_progress)
@@ -140,7 +145,7 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
         if len(payload) > 1:
             res = requests.post(post_url, data=payload)
             
-            # 🚨 假成功偵測：如果回應的網頁還有表單原始碼，代表被退回表單頁面了！
+            # 🚨 假成功偵測：如果回應的網頁還有表單原始碼，代表被退回表單頁面了
             if res.status_code == 200 and "FB_PUBLIC_LOAD_DATA_" not in res.text:
                 success_count += 1
             else:
