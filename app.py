@@ -10,7 +10,7 @@ from zhipuai import ZhipuAI
 ZHIPU_API_KEY = "2040bad6a4de457db8783082ea9120bc.FDSw7nPPtfv8KCaD"
 CLIENT = ZhipuAI(api_key=ZHIPU_API_KEY)
 
-# ================= 模組一：自動解析表單 (支援網格題深度解析版) =================
+# ================= 模組一：自動解析表單 (終極網格題深度解析版) =================
 def parse_google_form(form_url):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -37,20 +37,25 @@ def parse_google_form(form_url):
             try:
                 main_title = q[1]
                 
-                # 處理所有類型的題目 (包含單選題網格的深度拆解)
                 if len(q) > 4 and isinstance(q[4], list):
                     for sub_q in q[4]:
                         if not isinstance(sub_q, list) or len(sub_q) == 0: continue
                         
                         entry_id = f"entry.{sub_q[0]}"
+                        sub_title = main_title
                         
                         # 嘗試抓出網格題的「子題目名稱」
-                        sub_title = main_title
-                        if len(sub_q) > 3 and isinstance(sub_q[3], list) and len(sub_q[3]) > 0:
+                        if len(sub_q) >= 4 and isinstance(sub_q[3], list) and len(sub_q[3]) > 0:
                             sub_title = sub_q[3][0]
-                            
-                        # 若有子題目則使用子題目，讓 AI 更容易對應
-                        final_title = sub_title if sub_title and sub_title != main_title else main_title
+                        elif len(q) > 5 and isinstance(q[5], list) and len(q[5]) > 0:
+                            sub_title = f"{main_title}_{sub_q[0]}"
+
+                        # 如果是網格題，我們把 主題目和子題目 結合在一起給 AI 看
+                        if sub_title and sub_title != main_title:
+                             final_title = f"{main_title} - {sub_title}"
+                        else:
+                             final_title = main_title
+                             
                         parsed_questions.append({"title": final_title, "entry_id": entry_id})
                         
             except (IndexError, TypeError):
@@ -60,10 +65,9 @@ def parse_google_form(form_url):
         
     return parsed_questions
 
-# ================= 模組二：智譜 API 策略引擎 =================
+# ================= 模組二：智譜 API 策略引擎 (強制 1 份防破圖) =================
 def generate_answers(questions, persona, total_count):
     all_answers = []
-    # 🚨 關鍵修改：強制一次只生成 1 份，避免 JSON 字數過長導致破圖
     batch_size = 1 
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -81,11 +85,9 @@ def generate_answers(questions, persona, total_count):
         {questions_str}
         
         【填寫邏輯規則】：
-        1. 保持人設一致：對於選擇題或判斷題，請根據你已經設定的背景資訊來推斷並填寫最合理的選項文字。
-        2. 鍵值匹配：返回的 JSON 鍵值(Key)必須「完全等於」上述列表中的題目名稱，一字不差，絕對不要自己縮寫或加上題號。
-        3. 選擇題極度嚴格：請務必猜測該題目的可能選項，並僅輸出一個選項文字。
-        
-        請以 JSON 陣列格式返回。絕對不要輸出任何解釋文字，只需輸出標準的 JSON 陣列格式。
+        1. 保持人設一致：請根據背景資訊推斷並填寫最合理的文字。
+        2. 鍵值匹配：返回的 JSON 鍵值(Key)必須「完全等於」上述列表中的題目名稱（包含破折號與空格），一字不差。
+        3. 請以 JSON 陣列格式返回。絕對不要輸出任何解釋文字，只需輸出標準的 JSON 陣列。
         """
         
         try:
@@ -99,7 +101,6 @@ def generate_answers(questions, persona, total_count):
             result_text = result_text.replace("```json", "").replace("```", "").strip()
             batch_answers = json.loads(result_text)
             
-            # 🚨 關鍵修改：如果 AI 耍小聰明只回傳了單一物件，我們幫它套上陣列中括號
             if isinstance(batch_answers, dict):
                 batch_answers = [batch_answers]
                 
@@ -127,7 +128,7 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
     
     for idx, answer_set in enumerate(answers):
         payload = {}
-        # 加上多頁防護機制
+        # 加上多頁防護機制，讓 Google 知道我們走完了所有分頁
         payload['pageHistory'] = "0,1,2,3,4,5,6" 
         
         for q in parsed_questions:
@@ -145,12 +146,11 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
         if len(payload) > 1:
             res = requests.post(post_url, data=payload)
             
-            # 🚨 假成功偵測：如果回應的網頁還有表單原始碼，代表被退回表單頁面了
             if res.status_code == 200 and "FB_PUBLIC_LOAD_DATA_" not in res.text:
                 success_count += 1
             else:
-                st.error(f"第 {idx+1} 份問卷遭遇「假成功」！(資料被 Google 退件)")
-                st.warning("請檢查下方資料，可能是某個必填題(例如 DSE 網格題) AI 沒有產生對應的資料：")
+                st.error(f"第 {idx+1} 份問卷遭遇「假成功」！(資料被 Google 退件，可能是必填未填)")
+                st.warning("請檢查下方資料，比對表單必填項：")
                 st.json(payload) 
         else:
             st.warning("攔截到一份空數據，未提交至表單。")
@@ -171,7 +171,7 @@ st.set_page_config(page_title="自動問卷生成系統", page_icon="🤖")
 st.title("🤖 Google Form 自動填寫系統")
 st.markdown("輸入 Google 表單連結與目標人設，系統將自動生成並批量提交資料。")
 
-# 預設的 35 組 JUPAS 人設 Prompt
+# 預設的 35 組 JUPAS 人設 Prompt (已更新網格題指令)
 default_persona = """你現在是一位香港八大院校的受訪者，正在填寫一份關於升學與職涯意向的大型深度調查問卷。
 
 【重要身分設定】：
@@ -201,27 +201,26 @@ default_persona = """你現在是一位香港八大院校的受訪者，正在�
 1. 基礎文字題：
 - 「姓名」：隨機生成姓氏與名字，最後一個字強制為大寫字母「X」（如「李小X」、「張X」）。
 - 「入學年份」及「年級」：如果是大學生，請在「2023~2026」及「Year 1~4」中合理選擇；如果是畢業生，這兩題請一律填寫「其他:」。
-- 「畢業生五大職業(不清楚請填NA)」：請隨機決定，大約一半的機率填寫「NA」，另一半的機率請根據你抽到的專業，合理列出 3-5 個具體的職業名稱。
+- 「畢業生五大職業(不清楚請填NA)」：大約一半機率填「NA」，一半機率根據專業列出 3-5 個具體職業。
 
 2. [畢業生填寫] 專屬題邏輯（極度重要）：
 - 若身分是「在校大學生」：所有標題包含「[畢業生填寫]」的欄位，請一律回傳空字串 ""。
-- 若身分是「畢業生」：請根據你抽到的專業，合理填寫行業、職位名稱、月薪（純數字，如 "25000"）、累積工作經驗等。
+- 若身分是「畢業生」：請根據你抽到的專業，合理填寫行業、職位、月薪（純數字）、經驗等。
 
 3. 海量的「0-10分」評分題（極度重要）：
-- 問卷中有大量如「動物」、「電腦科技」、「滿意就讀學系」、「我的工作有社會價值」等細項。
-- 只要題目有標示「(0:完全不同意; 10:完全同意)」或類似字眼，請你【必須輸出純數字字串 "0" 到 "10"】。
-- 請發揮強大的邏輯關聯力！例如：讀 CS(計算機)的在「電腦科技」填 "10"；讀醫科的在「醫藥」、「幫助病人」填 "10"；商科在「財經金融」、「高薪」填 "9"。其他與你科系無關的領域，請填 "0" 到 "4" 之間的低分。
-- 「物理科主題 (只限物理科學生)」：若你抽到的不是理科或工程，請一律填寫空字串 ""。
+- 只要題目後方有「(0:完全不同意; 10:完全同意)」，請【必須輸出純數字字串 "0" 到 "10"】。
+- 請注意，網格題已被合併為「主題目 - 子題目」的形式（例如：「我感興趣的領域 (0完全不同意; 10完全同意) - 電腦科技」）。請根據你抽到的專業給分。例如讀 CS 的在「電腦科技」填 "10"，商科在「財經金融」填 "9"。
+- 「物理科主題 (只限物理科學生)」開頭的題目：若抽到的不是理科/工程，一律填 ""。
 
 4. DSE成績評分矩陣：
-- 請為 4 科核心（中、英、數、通識）及隨機 2 科選修（如物理、化學），填寫「1」、「2」、「3」、「4」、「5」、「5*」或「5**」。
-- 其餘沒修讀的科目，請一律填寫空字串 ""。
+- 題目形式為「DSE成績（請漏空沒修讀科目） - 中國語文」。
+- 請為 4 科核心及隨機 2 科選修填寫「1」、「2」、「3」、「4」、「5」、「5*」或「5**」。
+- 其餘沒修讀科目一律填寫空字串 ""。
 
 5. 其他單選題：
 - 「我的兄弟姊妹數目」：從 "0", "1", "2", "3" 中選一個。
-- 「請選擇(接駁廣泛職業型...)」等單選題，請輸出完整的選項文字。
-
-請嚴格遵循上述所有規則，確保輸出的 JSON 鍵值與題目名稱完全吻合。"""
+- 單選題請確保選項文字一字不差。
+"""
 
 with st.form("auto_form"):
     form_url = st.text_input(
@@ -235,7 +234,7 @@ with st.form("auto_form"):
     with col1:
         target_count = st.number_input("需要生成的問卷數量", min_value=1, max_value=500, value=3)
     with col2:
-        duration_hours = st.number_input("設定要在幾小時內陸續填寫", min_value=0.0, max_value=72.0, value=0.0, step=0.5, help="輸入0代表全速提交。輸入例如1代表在1小時內隨機分散提交完畢。")
+        duration_hours = st.number_input("設定要在幾小時內陸續填寫", min_value=0.0, max_value=72.0, value=0.0, step=0.5, help="輸入0代表全速提交。")
     
     submitted = st.form_submit_button("開始生成並提交")
 
@@ -252,11 +251,11 @@ if submitted:
                 questions = parse_google_form(form_url)
                 st.write(f"✅ 成功解析出 {len(questions)} 道題目！")
                 
-                st.write("🧠 正在呼叫 AI 分批生成模擬數據...")
+                st.write("🧠 正在呼叫 AI 生成模擬數據...")
                 answers = generate_answers(questions, persona, target_count)
                 
                 if len(answers) > 0:
-                    st.write("🚀 正在啟動擬真時間分散提交程序...")
+                    st.write("🚀 正在啟動提交程序...")
                     success_count = submit_form(form_url, questions, answers, duration_hours)
                     
                     if success_count > 0:
@@ -265,7 +264,7 @@ if submitted:
                     else:
                         status.update(label="提交失敗，請檢查下方紅框中的資料格式錯誤。", state="error")
                 else:
-                    status.update(label="未成功生成任何數據，請檢查 AI 回傳結果。", state="error")
+                    status.update(label="未成功生成任何數據。", state="error")
                     
             except Exception as e:
                 status.update(label="執行發生錯誤", state="error")
