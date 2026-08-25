@@ -7,11 +7,10 @@ import random
 from zhipuai import ZhipuAI
 
 # ================= 配置區 =================
-# 填入你的智譜 API Key
 ZHIPU_API_KEY = "2040bad6a4de457db8783082ea9120bc.FDSw7nPPtfv8KCaD"
 CLIENT = ZhipuAI(api_key=ZHIPU_API_KEY)
 
-# ================= 模組一：自動解析表單 (加入反爬蟲偽裝) =================
+# ================= 模組一：自動解析表單 (支援網格題深度解析版) =================
 def parse_google_form(form_url):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -27,8 +26,7 @@ def parse_google_form(form_url):
          match = re.search(r'var FB_PUBLIC_LOAD_DATA_ = (\[.*?\]);</script>', response.text, re.DOTALL)
          
     if not match:
-        error_preview = response.text[:200].replace('\n', ' ')
-        raise ValueError(f"找不到表單資料，可能被防爬蟲機制擋下。伺服器實際回傳內容為：{error_preview}")
+        raise ValueError(f"找不到表單資料，可能被防爬蟲機制擋下。")
 
     data = json.loads(match.group(1))
     parsed_questions = []
@@ -37,21 +35,35 @@ def parse_google_form(form_url):
         questions_data = data[1][1]
         for q in questions_data:
             try:
-                title = q[1]
-                entry_id = f"entry.{q[4][0][0]}"
-                parsed_questions.append({"title": title, "entry_id": entry_id})
+                main_title = q[1]
+                
+                # 處理所有類型的題目 (包含單選題網格的深度拆解)
+                if len(q) > 4 and isinstance(q[4], list):
+                    for sub_q in q[4]:
+                        if not isinstance(sub_q, list) or len(sub_q) == 0: continue
+                        
+                        entry_id = f"entry.{sub_q[0]}"
+                        
+                        # 嘗試抓出網格題的「子題目名稱」(例如: 動物、電腦科技、中國語文)
+                        sub_title = main_title
+                        if len(sub_q) > 3 and isinstance(sub_q[3], list) and len(sub_q[3]) > 0:
+                            sub_title = sub_q[3][0]
+                            
+                        # 若有子題目則使用子題目，讓 AI 更容易對應
+                        final_title = sub_title if sub_title and sub_title != main_title else main_title
+                        parsed_questions.append({"title": final_title, "entry_id": entry_id})
+                        
             except (IndexError, TypeError):
                 continue
     except (IndexError, TypeError) as e:
-        raise ValueError(f"解析題目結構失敗，表單結構可能不受支援。錯誤：{e}")
+        raise ValueError(f"解析題目結構失敗：{e}")
         
     return parsed_questions
 
-# ================= 模組二：智譜 API 策略引擎 (分批 + 邏輯關聯版) =================
+# ================= 模組二：智譜 API 策略引擎 =================
 def generate_answers(questions, persona, total_count):
     all_answers = []
     batch_size = 5 
-    
     progress_bar = st.progress(0)
     status_text = st.empty()
     
@@ -60,10 +72,8 @@ def generate_answers(questions, persona, total_count):
         status_text.text(f"⏳ 正在與 AI 溝通生成數據... (目前進度: {i}/{total_count})")
         
         questions_str = "\n".join([f"- {q['title']}" for q in questions])
-        
         prompt = f"""
-        你現在是一個自動化數據生成引擎。
-        我需要填寫一份問卷，請根據以下設定的方向/人設：【{persona}】
+        你現在是一個自動化數據生成引擎。我需要填寫一份問卷，請根據以下設定的方向/人設：【{persona}】
         為我生成 {current_count} 份不同的問卷答案。
         
         問卷題目如下：
@@ -92,7 +102,6 @@ def generate_answers(questions, persona, total_count):
                 all_answers.extend(batch_answers)
             else:
                 st.warning(f"第 {i+1} 批次資料格式有誤，已略過。")
-                
         except Exception as e:
             st.warning(f"第 {i+1} 批次生成發生錯誤，略過... ({str(e)})")
             
@@ -103,21 +112,21 @@ def generate_answers(questions, persona, total_count):
     status_text.text(f"✅ AI 數據生成完畢！共準備好 {len(all_answers)} 份資料。")
     return all_answers
 
-# ================= 模組三：並發提交模組 (時間分散模擬版) =================
+# ================= 模組三：並發提交模組 (假成功防禦版) =================
 def submit_form(form_url, parsed_questions, answers, duration_hours):
     post_url = form_url.replace("/viewform", "/formResponse")
     success_count = 0
-    
     total_seconds = duration_hours * 3600
     avg_wait = total_seconds / len(answers) if len(answers) > 0 else 0
-    
     wait_status = st.empty()
     
     for idx, answer_set in enumerate(answers):
         payload = {}
+        # 加上多頁防護機制
+        payload['pageHistory'] = "0,1,2,3,4,5,6" 
+        
         for q in parsed_questions:
             q_title = q['title']
-            
             if q_title in answer_set:
                 payload[q['entry_id']] = answer_set[q_title]
             else:
@@ -128,22 +137,23 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                         payload[q['entry_id']] = ai_val
                         break
                         
-        if payload:
+        if len(payload) > 1:
             res = requests.post(post_url, data=payload)
-            if res.status_code == 200:
+            
+            # 🚨 假成功偵測：如果回應的網頁還有表單原始碼，代表被退回表單頁面了！
+            if res.status_code == 200 and "FB_PUBLIC_LOAD_DATA_" not in res.text:
                 success_count += 1
             else:
-                st.error(f"第 {idx+1} 份問卷被 Google 拒絕！(狀態碼: {res.status_code})")
-                st.json(answer_set)
+                st.error(f"第 {idx+1} 份問卷遭遇「假成功」！(資料被 Google 退件)")
+                st.warning("請檢查下方資料，可能是某個必填題(例如 DSE 網格題) AI 沒有產生對應的資料：")
+                st.json(payload) 
         else:
             st.warning("攔截到一份空數據，未提交至表單。")
             
-        # 如果不是最後一份，就執行隨機等待
         if idx < len(answers) - 1:
             if duration_hours > 0:
-                # 隨機波動：平均時間的 0.5 倍 ~ 1.5 倍
                 wait_time = random.uniform(avg_wait * 0.5, avg_wait * 1.5)
-                wait_status.info(f"⏳ 模擬真實真人填寫中... 第 {idx+1} 份已提交，將隨機等待 {int(wait_time)} 秒後提交下一份。")
+                wait_status.info(f"⏳ 第 {idx+1} 份已提交，隨機等待 {int(wait_time)} 秒...")
                 time.sleep(wait_time)
             else:
                 time.sleep(0.5)
@@ -157,59 +167,56 @@ st.title("🤖 Google Form 自動填寫系統")
 st.markdown("輸入 Google 表單連結與目標人設，系統將自動生成並批量提交資料。")
 
 # 預設的 35 組 JUPAS 人設 Prompt
-default_persona = """你現在是一個正在參加香港 JUPAS 升學聯招的高中畢業生，正在填寫未來的升學意向調查。你需要隨機扮演不同興趣的學生。
+default_persona = """你現在是一位香港八大院校的受訪者，正在填寫一份關於升學與職涯意向的大型深度調查問卷。
 
-【核心綁定規定（極度重要）】：
-關於「你想读的大学是？」、「你想报的专业名称是？」、「专业的js code是？」與隱藏的「學科偏向」，請你【必須且只能】從下方列表隨機挑選「完整的一組」來填寫。絕對不能拆開拼湊，也不能自己捏造代碼！
+【重要身分設定】：
+請你每次生成數據時，先隨機決定自己的身分是「在校大學生」還是「已全職工作3個月以上的畢業生」（兩者比例大約各半）。
 
+【核心身分與代碼綁定】：
+關於「大學學科全名」、「大學學系編號」與隱藏的「學科偏向」，請【必須且只能】從下方列表隨機挑選「完整的一組」。
 [真實 JUPAS 組合菜單]
-- 組合1：大學「香港大學」, 專業「理學」, JS code「JS6901」, 學科偏向「理科」
-- 組合2：大學「香港大學」, 專業「內外全科醫學」, JS code「JS6456」, 學科偏向「理科」
-- 組合3：大學「香港大學」, 專業「工程學」, JS code「JS6963」, 學科偏向「工科」
-- 組合4：大學「香港大學」, 專業「文學」, JS code「JS6054」, 學科偏向「文科」
-- 組合5：大學「香港大學」, 專業「工商管理學」, JS code「JS6755」, 學科偏向「商科」
-- 組合6：大學「香港大學」, 專業「社會科學」, JS code「JS6810」, 學科偏向「文科」
-- 組合7：大學「香港中文大學」, 專業「綜合工商管理」, JS code「JS4202」, 學科偏向「商科」
-- 組合8：大學「香港中文大學」, 專業「工程學」, JS code「JS4401」, 學科偏向「工科」
-- 組合9：大學「香港中文大學」, 專業「理學」, JS code「JS4601」, 學科偏向「理科」
-- 組合10：大學「香港中文大學」, 專業「文學」, JS code「JS4006」, 學科偏向「文科」
-- 組合11：大學「香港中文大學」, 專業「社會科學」, JS code「JS4801」, 學科偏向「文科」
-- 組合12：大學「香港中文大學」, 專業「護理學」, JS code「JS4331」, 學科偏向「理科」
-- 組合13：大學「香港科技大學」, 專業「工商管理」, JS code「JS5300」, 學科偏向「商科」
-- 組合14：大學「香港科技大學」, 專業「工程學」, JS code「JS5200」, 學科偏向「工科」
-- 組合15：大學「香港科技大學」, 專業「理學」, JS code「JS5100」, 學科偏向「理科」
-- 組合16：大學「香港科技大學」, 專業「計算機科學」, JS code「JS5211」, 學科偏向「工科」
-- 組合17：大學「香港理工大學」, 專業「物理治療學」, JS code「JS3636」, 學科偏向「理科」
-- 組合18：大學「香港理工大學」, 專業「電子計算」, JS code「JS3180」, 學科偏向「工科」
-- 組合19：大學「香港理工大學」, 專業「設計學」, JS code「JS3866」, 學科偏向「文科」
-- 組合20：大學「香港理工大學」, 專業「護理學」, JS code「JS3390」, 學科偏向「理科」
-- 組合21：大學「香港理工大學」, 專業「航空及供應鏈管理」, JS code「JS3140」, 學科偏向「商科」
-- 組合22：大學「香港城市大學」, 專業「計算機科學」, JS code「JS1204」, 學科偏向「工科」
-- 組合23：大學「香港城市大學」, 專業「工商管理」, JS code「JS1001」, 學科偏向「商科」
-- 組合24：大學「香港城市大學」, 專業「媒體與傳播」, JS code「JS1106」, 學科偏向「文科」
-- 組合25：大學「香港城市大學」, 專業「會計學」, JS code「JS1041」, 學科偏向「商科」
-- 組合26：大學「香港浸會大學」, 專業「傳理學」, JS code「JS2310」, 學科偏向「文科」
-- 組合27：大學「香港浸會大學」, 專業「工商管理」, JS code「JS2120」, 學科偏向「商科」
-- 組合28：大學「香港浸會大學」, 專業「理學」, JS code「JS2910」, 學科偏向「理科」
-- 組合29：大學「香港浸會大學」, 專業「文學」, JS code「JS2510」, 學科偏向「文科」
-- 組合30：大學「嶺南大學」, 專業「工商管理」, JS code「JS7200」, 學科偏向「商科」
-- 組合31：大學「嶺南大學」, 專業「文學」, JS code「JS7101」, 學科偏向「文科」
-- 組合32：大學「嶺南大學」, 專業「社會科學」, JS code「JS7300」, 學科偏向「文科」
-- 組合33：大學「香港教育大學」, 專業「幼兒教育」, JS code「JS8404」, 學科偏向「文科」
-- 組合34：大學「香港教育大學」, 專業「小學教育」, JS code「JS8105」, 學科偏向「文科」
-- 組合35：大學「香港教育大學」, 專業「心理學」, JS code「JS8663」, 學科偏向「理科」
+- 組合1：專業「理學」, JS code「JS6901」, 學科偏向「理科」
+- 組合2：專業「內外全科醫學」, JS code「JS6456」, 學科偏向「理科」
+- 組合3：專業「工程學」, JS code「JS6963」, 學科偏向「工科」
+- 組合4：專業「文學」, JS code「JS6054」, 學科偏向「文科」
+- 組合5：專業「工商管理學」, JS code「JS6755」, 學科偏向「商科」
+- 組合6：專業「社會科學」, JS code「JS6810」, 學科偏向「文科」
+- 組合7：專業「綜合工商管理」, JS code「JS4202」, 學科偏向「商科」
+- 組合8：專業「工程學」, JS code「JS4401」, 學科偏向「工科」
+- 組合9：專業「理學」, JS code「JS4601」, 學科偏向「理科」
+- 組合10：專業「護理學」, JS code「JS4331」, 學科偏向「理科」
+- 組合11：專業「工商管理」, JS code「JS5300」, 學科偏向「商科」
+- 組合12：專業「計算機科學」, JS code「JS5211」, 學科偏向「工科」
+- 組合13：專業「物理治療學」, JS code「JS3636」, 學科偏向「理科」
+- 組合14：專業「設計學」, JS code「JS3866」, 學科偏向「文科」
+- 組合15：專業「傳理學」, JS code「JS2310」, 學科偏向「文科」
 
-【其他欄位生成規定】：
-1. 你的名字是？：請隨機生成真實、常見的中文姓名（2-3個字）。
-2. 你的年龄是？：請在 17 到 19 之間隨機選擇一個數字。
-3. 你对rightpick有什么看法？：請隨機用 1-2 句話表達高度評價。內容需提及 rightpick 幫助你解決了升學規劃的痛點、減少了對未來的迷惘等。
+【各類題型極度嚴格填寫規則】：
 
-【選擇題嚴格規定（必須一字不差）】：
-- 「你偏向于什么学科？」：請根據你上面抽到的組合填寫（必須完全等於「文科」、「理科」、「商科」或「工科」）。
-- 「你在大学期待小组合作还是个人合作？」：只能回答「小组合作」或「个人合作」。
-- 「在大学你期待认识更多朋友还是专注学业？」：只能回答「认识更多朋友」或「专注学业」。
-- 「你期待选择自己感兴趣的专业还是高人工的专业？」：只能回答「感兴趣的专业」或「高人工的专业」。
-- 「你是愿意毕业就就业还是继续深造学历（读master、phd）」：只能回答「毕业就就业」或「继续深造学历」。"""
+1. 基礎文字題：
+- 「姓名」：隨機生成姓氏與名字，最後一個字強制為大寫字母「X」（如「李小X」、「張X」）。
+- 「入學年份」及「年級」：如果是大學生，請在「2023~2026」及「Year 1~4」中合理選擇；如果是畢業生，這兩題請一律填寫「其他:」。
+- 「畢業生五大職業(不清楚請填NA)」：請隨機決定，大約一半的機率填寫「NA」，另一半的機率請根據你抽到的專業，合理列出 3-5 個具體的職業名稱。
+
+2. [畢業生填寫] 專屬題邏輯（極度重要）：
+- 若身分是「在校大學生」：所有標題包含「[畢業生填寫]」的欄位，請一律回傳空字串 ""。
+- 若身分是「畢業生」：請根據你抽到的專業，合理填寫行業、職位名稱、月薪（純數字，如 "25000"）、累積工作經驗等。
+
+3. 海量的「0-10分」評分題（極度重要）：
+- 問卷中有大量如「動物」、「電腦科技」、「滿意就讀學系」、「我的工作有社會價值」等細項。
+- 只要題目有標示「(0:完全不同意; 10:完全同意)」或類似字眼，請你【必須輸出純數字字串 "0" 到 "10"】。
+- 請發揮強大的邏輯關聯力！例如：讀 CS(計算機)的在「電腦科技」填 "10"；讀醫科的在「醫藥」、「幫助病人」填 "10"；商科在「財經金融」、「高薪」填 "9"。其他與你科系無關的領域，請填 "0" 到 "4" 之間的低分。
+- 「物理科主題 (只限物理科學生)」：若你抽到的不是理科或工程，請一律填寫空字串 ""。
+
+4. DSE成績評分矩陣：
+- 請為 4 科核心（中、英、數、通識）及隨機 2 科選修（如物理、化學），填寫「1」、「2」、「3」、「4」、「5」、「5*」或「5**」。
+- 其餘沒修讀的科目，請一律填寫空字串 ""。
+
+5. 其他單選題：
+- 「我的兄弟姊妹數目」：從 "0", "1", "2", "3" 中選一個。
+- 「請選擇(接駁廣泛職業型...)」等單選題，請輸出完整的選項文字。
+
+請嚴格遵循上述所有規則，確保輸出的 JSON 鍵值與題目名稱完全吻合。"""
 
 with st.form("auto_form"):
     form_url = st.text_input(
