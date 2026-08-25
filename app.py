@@ -128,7 +128,7 @@ def generate_answers(questions, persona, total_count):
     status_text.text(f"✅ AI 數據生成完畢！共準備好 {len(all_answers)} 份資料。")
     return all_answers
 
-# ================= 模組三：並發提交模組 (分頁繞過 & 終極防護版) =================
+# ================= 模組三：並發提交模組 (分頁修復版) =================
 def submit_form(form_url, parsed_questions, answers, duration_hours):
     post_url = form_url.replace("/viewform", "/formResponse")
     success_count = 0
@@ -138,8 +138,8 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
     
     for idx, answer_set in enumerate(answers):
         payload = {}
-        # 🔥 終極殺招：強制設定為 0，破解 Google 的跨頁邏輯驗證
-        payload['pageHistory'] = "0" 
+        # 🔥 真正殺招：告訴 Google 我們 7 頁全部跑完了，請觸發「最終提交」！
+        payload['pageHistory'] = "0,1,2,3,4,5,6" 
         
         # 拍扁 JSON，同時清洗不合法的陣列格式
         flat_answers = {}
