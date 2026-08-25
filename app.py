@@ -128,7 +128,7 @@ def generate_answers(questions, persona, total_count):
     status_text.text(f"✅ AI 數據生成完畢！共準備好 {len(all_answers)} 份資料。")
     return all_answers
 
-# ================= 模組三：並發提交模組 =================
+# ================= 模組三：並發提交模組 (分頁繞過 & 終極防護版) =================
 def submit_form(form_url, parsed_questions, answers, duration_hours):
     post_url = form_url.replace("/viewform", "/formResponse")
     success_count = 0
@@ -138,7 +138,8 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
     
     for idx, answer_set in enumerate(answers):
         payload = {}
-        payload['pageHistory'] = "0,1,2,3,4,5,6" 
+        # 🔥 終極殺招：強制設定為 0，破解 Google 的跨頁邏輯驗證
+        payload['pageHistory'] = "0" 
         
         # 拍扁 JSON，同時清洗不合法的陣列格式
         flat_answers = {}
@@ -163,7 +164,7 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
             
             # 🚨 身分隔離機制：如果是學生，跳過畢業生專屬題目
             if is_student and "畢業生" in q_title:
-                # 【例外】：五大職業這題是全體必填，不能跳過！
+                # 【例外保護】：五大職業這題是全體必填，不能跳過！
                 if "五大職業" not in q_title:
                     continue
                 
@@ -180,8 +181,8 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
             
             # 檢查並修正 AI 填寫的內容
             if answer_val is not None:
-                # 攔截包含括號 [] 的殘餘字串 (AI 常犯錯誤)
                 answer_str = str(answer_val)
+                # 攔截包含括號 [] 的殘餘字串 (AI 常犯錯誤)
                 if answer_str.startswith("[") and answer_str.endswith("]"):
                     answer_str = "NA"
                 
@@ -196,20 +197,25 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 if "年級" in q_title and answer_str not in ["Year 1", "Year 2", "Year 3", "Year 4", "其他:"]:
                     answer_str = random.choice(["Year 1", "Year 2", "Year 3", "Year 4"])
                 
-                # 新增防護：如果是學生，強制把五大職業這題變成 NA
+                # 若是學生，強制把五大職業這題變成 NA
                 if is_student and "五大職業" in q_title:
                     answer_str = "NA"
                 
                 payload[q['entry_id']] = answer_str
             
             else:
-                # 補救機制：漏題自動填寫 (僅限符合身分的題目)
+                # 🛡️ 補救機制：漏題自動填寫 (防止必填被跳過)
                 if "(0" in q_title and "10" in q_title:
                     payload[q['entry_id']] = str(random.randint(4, 8))
                 elif "兄弟姊妹數目" in q_title:
                     payload[q['entry_id']] = str(random.choice([0, 1, 2]))
                 elif "五大職業" in q_title:
                     payload[q['entry_id']] = "NA"
+                elif re.search(r'\([WSCIRE]\)', q_title):
+                    payload[q['entry_id']] = str(random.randint(4, 8))
+                # 🔥 補漏殺招：強制補齊 DSE 核心科目，防止矩陣隱藏必填報錯
+                elif "DSE成績" in q_title and any(subj in q_title for subj in ["中國語文", "英國語文", "數學", "通識教育"]):
+                    payload[q['entry_id']] = str(random.randint(3, 5))
 
         if len(payload) > 1:
             res = requests.post(post_url, data=payload)
@@ -239,6 +245,7 @@ st.set_page_config(page_title="自動問卷生成系統", page_icon="🤖")
 st.title("🤖 Google Form 自動填寫系統")
 st.markdown("輸入 Google 表單連結與目標人設，系統將自動生成並批量提交資料。")
 
+# 這裡是最乾淨、不會產生引號和陣列的 Prompt
 default_persona = """你現在是一位香港八大院校的受訪者，正在填寫一份關於升學與職涯意向的大型深度調查問卷。
 
 【重要身分設定】：
