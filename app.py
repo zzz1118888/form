@@ -128,7 +128,7 @@ def generate_answers(questions, persona, total_count):
     status_text.text(f"✅ AI 數據生成完畢！共準備好 {len(all_answers)} 份資料。")
     return all_answers
 
-# ================= 模組三：並發提交模組 (漏題自動補救版) =================
+# ================= 模組三：並發提交模組 (身分隔離防護版) =================
 def submit_form(form_url, parsed_questions, answers, duration_hours):
     post_url = form_url.replace("/viewform", "/formResponse")
     success_count = 0
@@ -140,20 +140,33 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
         payload = {}
         payload['pageHistory'] = "0,1,2,3,4,5,6" 
         
-        # 把 AI 給的「嵌套字典」強制拍扁
+        # 拍扁 JSON，同時清洗不合法的陣列格式
         flat_answers = {}
         for key, value in answer_set.items():
             if isinstance(value, dict):
                 for sub_key, sub_value in value.items():
                     flat_answers[f"{key} - {sub_key}"] = str(sub_value)
+            elif isinstance(value, list):
+                # 如果 AI 傳了 list (例如 ['工程師', '產品經理'])，強制轉為逗號分隔字串
+                flat_answers[key] = ", ".join([str(v) for v in value])
             else:
                 flat_answers[key] = str(value)
                 
-        # 比對並提取答案，加入自動修補機制
+        # 🕵️ 偵測身分：判斷這份數據是「學生」還是「畢業生」
+        is_student = False
+        grade_str = flat_answers.get("年級", "")
+        if "Year" in grade_str or "大" in grade_str:
+            is_student = True
+            
+        # 比對並提取答案
         for q in parsed_questions:
             q_title = q['title']
-            answer_val = None
             
+            # 🚨 身分隔離機制：如果是學生，直接跳過所有「畢業生」專屬題目，防止邏輯衝突！
+            if is_student and "畢業生" in q_title:
+                continue
+                
+            answer_val = None
             if q_title in flat_answers:
                 answer_val = flat_answers[q_title]
             else:
@@ -166,28 +179,32 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
             
             # 檢查並修正 AI 填寫的內容
             if answer_val is not None:
-                # 1. 攔截 W, S, C 等幻覺字母
+                # 攔截包含括號 [] 的殘餘字串 (AI 常犯錯誤)
+                answer_str = str(answer_val)
+                if answer_str.startswith("[") and answer_str.endswith("]"):
+                    answer_str = "NA"
+                
+                # 攔截 W, S, C 等幻覺字母
                 if re.search(r'\([WSCIRE]\)', q_title):
-                    if not answer_val.isdigit():  
-                        answer_val = str(random.randint(4, 8))
+                    if not answer_str.isdigit():  
+                        answer_str = str(random.randint(4, 8))
                 
-                # 2. 強制修正「入學年份」格式
-                if "入學年份" in q_title and answer_val not in ["2023", "2024", "2025", "2026"]:
-                    answer_val = random.choice(["2023", "2024", "2025", "2026"])
-                    
-                # 3. 強制修正「年級」格式
-                if "年級" in q_title and answer_val not in ["Year 1", "Year 2", "Year 3", "Year 4"]:
-                    answer_val = random.choice(["Year 1", "Year 2", "Year 3", "Year 4"])
+                # 強制修正格式
+                if "入學年份" in q_title and answer_str not in ["2023", "2024", "2025", "2026", "其他:"]:
+                    answer_str = random.choice(["2023", "2024", "2025", "2026"])
+                if "年級" in q_title and answer_str not in ["Year 1", "Year 2", "Year 3", "Year 4", "其他:"]:
+                    answer_str = random.choice(["Year 1", "Year 2", "Year 3", "Year 4"])
                 
-                payload[q['entry_id']] = str(answer_val)
+                payload[q['entry_id']] = answer_str
             
             else:
-                # 🚨 自動修補機制：如果 AI 偷懶漏題，Python 幫忙補上必填欄位
+                # 補救機制：漏題自動填寫 (僅限符合身分的題目)
                 if "(0" in q_title and "10" in q_title:
-                    # 漏掉的 0-10 分必填題，自動隨機給 4~8 分
                     payload[q['entry_id']] = str(random.randint(4, 8))
                 elif "兄弟姊妹數目" in q_title:
                     payload[q['entry_id']] = str(random.choice([0, 1, 2]))
+                elif "五大職業" in q_title:
+                    payload[q['entry_id']] = "NA"
 
         if len(payload) > 1:
             res = requests.post(post_url, data=payload)
@@ -234,7 +251,7 @@ default_persona = """你現在是一位香港八大院校的受訪者，正在�
 1. 「姓名」：最後一個字強制為大寫字母「X」（如「張小X」）。
 2. 【入學年份】只能選擇輸出：2023、2024、2025 或 2026。
 3. 【年級】只能選擇輸出：Year 1、Year 2、Year 3 或 Year 4。
-4. 「畢業生五大職業(不清楚請填NA)」：隨機填「NA」或列出職業。
+4. ⚠️「畢業生五大職業(不清楚請填NA)」：請直接填寫字串 "NA"，絕對不可以輸出陣列或括號。
 5. [畢業生填寫] 相關問題：若身分是大學生，請【直接省略該 Key，不要出現在 JSON 中】。
 6. DSE成績評分矩陣：為核心及隨機2科選修填寫「1」到「5**」。沒修讀的【直接省略該 Key】。
 """
@@ -259,8 +276,6 @@ if submitted:
                 questions = parse_google_form(form_url)
                 
                 st.write(f"✅ 成功解析出 {len(questions)} 道題目！")
-                with st.expander("點擊查看解析出的題目標題清單 (幫助比對 Prompt)"):
-                    st.json([q['title'] for q in questions])
                 
                 st.write("🧠 正在呼叫 AI 生成模擬數據...")
                 answers = generate_answers(questions, persona, target_count)
