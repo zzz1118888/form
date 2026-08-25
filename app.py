@@ -128,7 +128,7 @@ def generate_answers(questions, persona, total_count):
     status_text.text(f"✅ AI 數據生成完畢！共準備好 {len(all_answers)} 份資料。")
     return all_answers
 
-# ================= 模組三：並發提交模組 (身分隔離防護版) =================
+# ================= 模組三：並發提交模組 =================
 def submit_form(form_url, parsed_questions, answers, duration_hours):
     post_url = form_url.replace("/viewform", "/formResponse")
     success_count = 0
@@ -147,7 +147,6 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 for sub_key, sub_value in value.items():
                     flat_answers[f"{key} - {sub_key}"] = str(sub_value)
             elif isinstance(value, list):
-                # 如果 AI 傳了 list (例如 ['工程師', '產品經理'])，強制轉為逗號分隔字串
                 flat_answers[key] = ", ".join([str(v) for v in value])
             else:
                 flat_answers[key] = str(value)
@@ -162,9 +161,11 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
         for q in parsed_questions:
             q_title = q['title']
             
-            # 🚨 身分隔離機制：如果是學生，直接跳過所有「畢業生」專屬題目，防止邏輯衝突！
+            # 🚨 身分隔離機制：如果是學生，跳過畢業生專屬題目
             if is_student and "畢業生" in q_title:
-                continue
+                # 【例外】：五大職業這題是全體必填，不能跳過！
+                if "五大職業" not in q_title:
+                    continue
                 
             answer_val = None
             if q_title in flat_answers:
@@ -194,6 +195,10 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                     answer_str = random.choice(["2023", "2024", "2025", "2026"])
                 if "年級" in q_title and answer_str not in ["Year 1", "Year 2", "Year 3", "Year 4", "其他:"]:
                     answer_str = random.choice(["Year 1", "Year 2", "Year 3", "Year 4"])
+                
+                # 新增防護：如果是學生，強制把五大職業這題變成 NA
+                if is_student and "五大職業" in q_title:
+                    answer_str = "NA"
                 
                 payload[q['entry_id']] = answer_str
             
@@ -241,11 +246,11 @@ default_persona = """你現在是一位香港八大院校的受訪者，正在�
 
 【核心身分與代碼綁定】：
 關於「大學學科全名」、「大學學系編號」與隱藏的「學科偏向」，請【必須且只能】從下方列表隨機挑選「完整的一組」。
-- 組合1：專業「理學」, JS code「JS6901」, 學科偏向「理科」
-- 組合2：專業「內外全科醫學」, JS code「JS6456」, 學科偏向「理科」
-- 組合3：專業「工程學」, JS code「JS6963」, 學科偏向「工科」
-- 組合4：專業「工商管理學」, JS code「JS6755」, 學科偏向「商科」
-- 組合5：專業「傳理學」, JS code「JS2310」, 學科偏向「文科」
+- 組合1：學科全名填寫「理學」, JS code填寫「JS6901」
+- 組合2：學科全名填寫「內外全科醫學」, JS code填寫「JS6456」
+- 組合3：學科全名填寫「工程學」, JS code填寫「JS6963」
+- 組合4：學科全名填寫「工商管理學」, JS code填寫「JS6755」
+- 組合5：學科全名填寫「傳理學」, JS code填寫「JS2310」
 
 【各類題型極度嚴格填寫規則】：
 1. 「姓名」：最後一個字強制為大寫字母「X」（如「張小X」）。
