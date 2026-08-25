@@ -128,7 +128,7 @@ def generate_answers(questions, persona, total_count):
     status_text.text(f"✅ AI 數據生成完畢！共準備好 {len(all_answers)} 份資料。")
     return all_answers
 
-# ================= 模組三：並發提交模組 (終極拍扁整形版) =================
+# ================= 模組三：並發提交模組 (防呆優化版) =================
 def submit_form(form_url, parsed_questions, answers, duration_hours):
     post_url = form_url.replace("/viewform", "/formResponse")
     success_count = 0
@@ -144,26 +144,34 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
         flat_answers = {}
         for key, value in answer_set.items():
             if isinstance(value, dict):
-                # 如果是字典，就把裡面的子項目拆出來，加上主標題
                 for sub_key, sub_value in value.items():
-                    # 嘗試組合成 "主題目 - 子題目" 的格式
                     flat_answers[f"{key} - {sub_key}"] = str(sub_value)
             else:
                 flat_answers[key] = str(value)
                 
-        # 接下來的對應邏輯，改用我們拍扁後的 flat_answers
+        # 比對並提取答案
         for q in parsed_questions:
             q_title = q['title']
+            answer_val = None
             
             if q_title in flat_answers:
-                payload[q['entry_id']] = flat_answers[q_title]
+                answer_val = flat_answers[q_title]
             else:
                 for ai_key, ai_val in flat_answers.items():
                     clean_q = re.sub(r'[^\w\s]', '', q_title)
                     clean_ai = re.sub(r'[^\w\s]', '', ai_key)
                     if clean_q and clean_ai and (clean_q in clean_ai or clean_ai in clean_q):
-                        payload[q['entry_id']] = ai_val
+                        answer_val = ai_val
                         break
+            
+            # 🔥 針對特殊題型的最後防線 (攔截 W, S, C 等幻覺字母)
+            if answer_val is not None:
+                if re.search(r'\([WSCIRE]\)', q_title):
+                    if not answer_val.isdigit():  
+                        # 如果 AI 沒有給出純數字 (例如給了 "W")，強制給出 4~8 之間的安全隨機評分
+                        answer_val = str(random.randint(4, 8))
+                
+                payload[q['entry_id']] = answer_val
                         
         if len(payload) > 1:
             res = requests.post(post_url, data=payload)
@@ -193,6 +201,7 @@ st.set_page_config(page_title="自動問卷生成系統", page_icon="🤖")
 st.title("🤖 Google Form 自動填寫系統")
 st.markdown("輸入 Google 表單連結與目標人設，系統將自動生成並批量提交資料。")
 
+# 這裡已更新了針對 (W) 題目的提示詞防禦
 default_persona = """你現在是一位香港八大院校的受訪者，正在填寫一份關於升學與職涯意向的大型深度調查問卷。
 
 【重要身分設定】：
@@ -211,9 +220,9 @@ default_persona = """你現在是一位香港八大院校的受訪者，正在�
 1. 「姓名」：最後一個字強制為大寫字母「X」（如「張小X」）。入學年份/年級：畢業生填「其他:」。
 2. 「畢業生五大職業(不清楚請填NA)」：隨機填「NA」或列出職業。
 3. [畢業生填寫]：若身分是大學生，請【直接省略該 Key，不要出現在 JSON 中】。
-4. 海量「0-10分」評分題：請【必須輸出純數字字串 "0" 到 "10"】。根據專業給分。不需要填的，請【直接省略該 Key】。
-5. DSE成績評分矩陣：為核心及隨機2科選修填寫「1」到「5**」。沒修讀的【直接省略該 Key】。
-6. 單選題請確保選項文字一字不差。
+4. 海量「0-10分」評分題：所有矩陣評分題，請【必須輸出純數字字串 "0" 到 "10"】。
+5. ⚠️【極度重要防呆】：表單最後一題包含「接駁廣泛職業型 (W)」、「職業薪酬掛兌型 (S)」等選項。這也是 0-10 分的評分題！絕對禁止輸出 "W"、"S" 等英文字母，必須給予 "0" 到 "10" 的純數字評分！
+6. DSE成績評分矩陣：為核心及隨機2科選修填寫「1」到「5**」。沒修讀的【直接省略該 Key】。
 """
 
 with st.form("auto_form"):
@@ -234,7 +243,11 @@ if submitted:
             try:
                 st.write("🔍 正在解析表單結構...")
                 questions = parse_google_form(form_url)
+                
+                # 新增：展開以供檢查的解析後題目清單
                 st.write(f"✅ 成功解析出 {len(questions)} 道題目！")
+                with st.expander("點擊查看解析出的題目標題清單 (幫助比對 Prompt)"):
+                    st.json([q['title'] for q in questions])
                 
                 st.write("🧠 正在呼叫 AI 生成模擬數據...")
                 answers = generate_answers(questions, persona, target_count)
