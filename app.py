@@ -130,7 +130,7 @@ def generate_answers(questions, persona, total_count):
     status_text.text(f"✅ AI 數據生成完畢！共準備好 {len(all_answers)} 份資料。")
     return all_answers
 
-# ================= 模組三：並發提交模組 (學生與畢業生邏輯隔離版) =================
+# ================= 模組三：並發提交模組 (無差別暴力破甲版) =================
 def submit_form(form_url, parsed_questions, fbzx_token, answers, duration_hours):
     post_url = form_url.replace("/viewform", "/formResponse")
     success_count = 0
@@ -155,20 +155,9 @@ def submit_form(form_url, parsed_questions, fbzx_token, answers, duration_hours)
             else:
                 flat_answers[key] = str(value)
                 
-        # 🕵️ 偵測身分：判斷這份數據是「學生」還是「畢業生」
-        is_student = False
-        grade_str = flat_answers.get("年級", "")
-        if "Year" in grade_str or "大" in grade_str:
-            is_student = True
-            
+        # 🕵️ 不再判斷身分！我們全部都填！
         for q in parsed_questions:
             q_title = q['title']
-            
-            # 🔥 身份防火牆：如果是學生，直接封殺所有帶有「畢業生」的題目
-            if is_student and "畢業生" in q_title:
-                if "五大職業" in q_title:
-                    payload[q['entry_id']] = "NA" # 只有這題因為帶星號必填，強制給 NA
-                continue # 其他的畢業生題目（包含0-10評分矩陣），直接跳過，絕對不填！
                 
             answer_val = None
             if q_title in flat_answers:
@@ -199,21 +188,23 @@ def submit_form(form_url, parsed_questions, fbzx_token, answers, duration_hours)
                 payload[q['entry_id']] = answer_str
             
             else:
-                # 🛡️ 補漏機制（這時已經排除了學生錯填畢業生題目的可能）
-                if "(0" in q_title and "10" in q_title:
+                # 🛡️ 無差別填滿殺招：只要是空的，管你是什麼身分，全部硬塞預設值！
+                if "五大職業" in q_title:
+                    payload[q['entry_id']] = "NA"
+                elif "(0" in q_title and "10" in q_title:
                     payload[q['entry_id']] = str(random.randint(4, 8))
                 elif "兄弟姊妹數目" in q_title:
                     payload[q['entry_id']] = str(random.choice([0, 1, 2]))
-                elif "DSE成績" in q_title:
-                    payload[q['entry_id']] = str(random.randint(3, 5))
                 elif re.search(r'\([WSCIRE]\)', q_title):
                     payload[q['entry_id']] = str(random.randint(4, 8))
-                elif "五大職業" in q_title:
-                    payload[q['entry_id']] = "NA"
                 elif "月薪" in q_title or "收入" in q_title:
                     payload[q['entry_id']] = "20000"
                 elif "時間" in q_title or "經驗" in q_title or "就業率" in q_title:
                     payload[q['entry_id']] = "1"
+                elif "行業" in q_title or "職能" in q_title or "職位名稱" in q_title:
+                    payload[q['entry_id']] = "NA"
+                elif "DSE成績" in q_title and any(subj in q_title for subj in ["中國語文", "英國語文", "數學", "通識教育"]):
+                    payload[q['entry_id']] = str(random.randint(3, 5))
 
         if len(payload) > 1:
             res = requests.post(post_url, data=payload)
@@ -223,7 +214,6 @@ def submit_form(form_url, parsed_questions, fbzx_token, answers, duration_hours)
             else:
                 st.error(f"第 {idx+1} 份問卷遭遇「假成功」！(資料被 Google 退件)")
                 
-                # 自動化 Google 報錯翻譯機
                 error_msgs = re.findall(r'data-error-message="([^"]+)"', res.text)
                 error_msgs = list(set([e for e in error_msgs if e.strip()]))
                 
@@ -256,7 +246,7 @@ st.markdown("輸入 Google 表單連結與目標人設，系統將自動生成�
 default_persona = """你現在是一位香港八大院校的受訪者，正在填寫一份關於升學與職涯意向的大型深度調查問卷。
 
 【重要身分設定】：
-請隨機決定自己的身分是「在校大學生」還是「已全職工作3個月以上的畢業生」。
+身分請隨機決定是「在校大學生」還是「已全職工作3個月以上的畢業生」。不論身分為何，請盡量填寫所有題目。
 
 【核心身分與代碼綁定】：
 關於「大學學科全名」、「大學學系編號」與隱藏的「學科偏向」，請【必須且只能】從下方列表隨機挑選「完整的一組」。
