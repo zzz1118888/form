@@ -44,13 +44,11 @@ def parse_google_form(form_url):
                         entry_id = f"entry.{sub_q[0]}"
                         sub_title = main_title
                         
-                        # 嘗試抓出網格題的「子題目名稱」
                         if len(sub_q) >= 4 and isinstance(sub_q[3], list) and len(sub_q[3]) > 0:
                             sub_title = sub_q[3][0]
                         elif len(q) > 5 and isinstance(q[5], list) and len(q[5]) > 0:
                             sub_title = f"{main_title}_{sub_q[0]}"
 
-                        # 如果是網格題，我們把 主題目和子題目 結合在一起給 AI 看
                         if sub_title and sub_title != main_title:
                              final_title = f"{main_title} - {sub_title}"
                         else:
@@ -65,7 +63,7 @@ def parse_google_form(form_url):
         
     return parsed_questions
 
-# ================= 模組二：智譜 API 策略引擎 (強制 1 份防破圖) =================
+# ================= 模組二：智譜 API 策略引擎 =================
 def generate_answers(questions, persona, total_count):
     all_answers = []
     batch_size = 1 
@@ -94,7 +92,8 @@ def generate_answers(questions, persona, total_count):
             response = CLIENT.chat.completions.create(
                 model="glm-4-flash",
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.8
+                temperature=0.8,
+                max_tokens=8192  # 🚨 關鍵防斷設定：放大輸出的字數上限，防止被切斷
             )
             
             result_text = response.choices[0].message.content
@@ -118,7 +117,7 @@ def generate_answers(questions, persona, total_count):
     status_text.text(f"✅ AI 數據生成完畢！共準備好 {len(all_answers)} 份資料。")
     return all_answers
 
-# ================= 模組三：並發提交模組 (假成功防禦版) =================
+# ================= 模組三：並發提交模組 =================
 def submit_form(form_url, parsed_questions, answers, duration_hours):
     post_url = form_url.replace("/viewform", "/formResponse")
     success_count = 0
@@ -128,7 +127,6 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
     
     for idx, answer_set in enumerate(answers):
         payload = {}
-        # 加上多頁防護機制，讓 Google 知道我們走完了所有分頁
         payload['pageHistory'] = "0,1,2,3,4,5,6" 
         
         for q in parsed_questions:
@@ -171,7 +169,7 @@ st.set_page_config(page_title="自動問卷生成系統", page_icon="🤖")
 st.title("🤖 Google Form 自動填寫系統")
 st.markdown("輸入 Google 表單連結與目標人設，系統將自動生成並批量提交資料。")
 
-# 預設的 35 組 JUPAS 人設 Prompt (已更新網格題指令)
+# 🚨 已優化的 Prompt，教導 AI 直接「省略 Key」來大幅縮減字數
 default_persona = """你現在是一位香港八大院校的受訪者，正在填寫一份關於升學與職涯意向的大型深度調查問卷。
 
 【重要身分設定】：
@@ -204,18 +202,18 @@ default_persona = """你現在是一位香港八大院校的受訪者，正在�
 - 「畢業生五大職業(不清楚請填NA)」：大約一半機率填「NA」，一半機率根據專業列出 3-5 個具體職業。
 
 2. [畢業生填寫] 專屬題邏輯（極度重要）：
-- 若身分是「在校大學生」：所有標題包含「[畢業生填寫]」的欄位，請一律回傳空字串 ""。
+- 若身分是「在校大學生」：所有標題包含「[畢業生填寫]」的欄位，【請直接省略該 Key，不要出現在 JSON 中】，絕對不要填空字串。
 - 若身分是「畢業生」：請根據你抽到的專業，合理填寫行業、職位、月薪（純數字）、經驗等。
 
 3. 海量的「0-10分」評分題（極度重要）：
 - 只要題目後方有「(0:完全不同意; 10:完全同意)」，請【必須輸出純數字字串 "0" 到 "10"】。
-- 請注意，網格題已被合併為「主題目 - 子題目」的形式（例如：「我感興趣的領域 (0完全不同意; 10完全同意) - 電腦科技」）。請根據你抽到的專業給分。例如讀 CS 的在「電腦科技」填 "10"，商科在「財經金融」填 "9"。
-- 「物理科主題 (只限物理科學生)」開頭的題目：若抽到的不是理科/工程，一律填 ""。
+- 請注意，網格題已被合併為「主題目 - 子題目」的形式（例如：「我感興趣的領域 (0完全不同意; 10完全同意) - 電腦科技」）。請根據你抽到的專業給分。
+- 「物理科主題 (只限物理科學生)」開頭的題目：若抽到的不是理科/工程，【請直接省略該 Key，不要出現在 JSON 中】。
 
 4. DSE成績評分矩陣：
 - 題目形式為「DSE成績（請漏空沒修讀科目） - 中國語文」。
 - 請為 4 科核心及隨機 2 科選修填寫「1」、「2」、「3」、「4」、「5」、「5*」或「5**」。
-- 其餘沒修讀科目一律填寫空字串 ""。
+- 其餘沒修讀科目【請直接省略該 Key，不要出現在 JSON 中】。
 
 5. 其他單選題：
 - 「我的兄弟姊妹數目」：從 "0", "1", "2", "3" 中選一個。
