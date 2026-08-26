@@ -136,6 +136,23 @@ def generate_answers(questions, persona, total_count):
 # ================= 模組三：高落差亂數引擎與精準身分隔離 =================
 def get_smart_score(q_title, major, options):
     score = random.choice([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    
+    if "理學" in major or "工程" in major or "計算機" in major or "計算" in major or "數據" in major:
+        if any(k in q_title for k in ["電腦", "邏輯", "科學", "力學", "電學", "工程", "數學"]): score = random.choice([8, 9, 10])
+        elif any(k in q_title for k in ["文字", "藝術", "音樂", "繪畫"]): score = random.choice([0, 1, 2])
+    elif "工商" in major or "管理" in major or "會計" in major or "金融" in major or "經濟" in major:
+        if any(k in q_title for k in ["財經", "領袖", "商業", "高薪", "社交", "管理"]): score = random.choice([8, 9, 10])
+        elif any(k in q_title for k in ["大自然", "物理"]): score = random.choice([0, 1, 2])
+    elif "傳理" in major or "文" in major or "時裝" in major or "語文" in major or "翻譯" in major:
+        if any(k in q_title for k in ["語言", "閱讀", "社交", "創作", "文字", "媒體", "繪畫"]): score = random.choice([8, 9, 10])
+        elif any(k in q_title for k in ["數學", "程式", "工程", "力學"]): score = random.choice([0, 1, 2])
+    elif "醫" in major or "護理" in major or "藥劑" in major or "牙醫" in major or "獸醫" in major:
+        if any(k in q_title for k in ["科學", "病人", "醫藥", "生物", "價值"]): score = random.choice([8, 9, 10])
+        elif any(k in q_title for k in ["物理", "程式"]): score = random.choice([2, 3, 4])
+        
+    if any(k in q_title for k in ["壓力低", "工作與生活平衡", "準時下班", "自由", "快樂"]):
+        score = random.choice([8, 9, 10])
+        
     score_str = str(score)
     if options:
         if score_str in options: return score_str
@@ -178,6 +195,7 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 
         is_graduate = "畢業" in gen_grade or "grad" in gen_grade.lower()
         
+        # 強制接管邏輯：確保入學年份與年級 100% 精準對應
         if not is_graduate:
             if "2026" in gen_year: gen_grade = "Year 1"
             elif "2025" in gen_year: gen_grade = "Year 2"
@@ -205,12 +223,17 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
         for q in parsed_questions:
             q_title = q['title']
             
-            # 🔥 極簡防呆跳過邏輯：只要是在校生，遇到「五大職業」或「含有0-10分選項的矩陣題」，直接跳過！
-            if not is_graduate:
-                if "五大職業" in q_title:
-                    continue
-                if q['options'] and any(x in q['options'] for x in ["0", "1", "2", "8", "9", "10"]):
-                    continue
+            # 🔥 修正版：極度精準的畢業生題目過濾！絕不誤殺普通必填題！
+            grad_keywords = [
+                "畢業生", "接駁廣泛職業型", "職業薪酬掛兌型", "大學輕鬆度過型", 
+                "興趣/目標大過天型", "注重大學品牌型", "成為專業人士型"
+            ]
+            
+            is_grad_q = any(kw in q_title for kw in grad_keywords)
+            
+            # 如果是在校生，而且這題是專屬畢業生的，才直接跳過不填
+            if not is_graduate and is_grad_q:
+                continue
             
             ai_val = None
             for ai_key, ai_val_iter in flat_answers.items():
@@ -219,7 +242,6 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                     break
             
             if q['options']:
-                # 🔥 修復「選項不完全吻合被拒絕」的問題
                 matched_opt = None
                 if ai_val:
                     matched_opt = next((opt for opt in q['options'] if ai_val in opt), None)
@@ -257,6 +279,7 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 elif "月薪" in q_title or "收入" in q_title: base_payload[q['entry_id']] = str(random.randint(18000, 28000))
                 elif "時間" in q_title or "經驗" in q_title or "就業率" in q_title: base_payload[q['entry_id']] = "1"
                 elif "行業" in q_title or "職能" in q_title or "職位名稱" in q_title: base_payload[q['entry_id']] = random.choice(["資訊科技", "工程", "市場營銷", "金融"])
+                elif "兄弟姊妹" in q_title: base_payload[q['entry_id']] = random.choice(["0", "1", "2"])
                 else: base_payload[q['entry_id']] = "NA"
 
         init_res = session.get(form_url)
@@ -283,26 +306,11 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                     time.sleep(0.5)
         else:
             st.error(f"❌ 第 {idx+1} 份問卷被 Google 拒絕！身分：{'畢業生' if is_graduate else '在校生'}")
-            
-            # 🔥 Google 報錯透視鏡：直接抓出真正原因
-            if "登入 - Google 帳戶" in res.text or "Sign in - Google Accounts" in res.text:
-                st.warning("⚠️ 透視結果：表單要求登入 Google 帳號！請到後台關閉「收集電子郵件」或「限制回覆 1 次」。")
-            elif "已經回覆過" in res.text or "already responded" in res.text:
-                st.warning("⚠️ 透視結果：表單設定了「每人只能回覆一次」，請到 Google 表單後台關閉該選項！")
-            elif "不再接受回應" in res.text or "no longer accepting responses" in res.text:
-                st.warning("⚠️ 透視結果：表單已經關閉，停止收集回覆了！")
+            required_errors = re.findall(r'data-error-message="([^"]+)"', res.text)
+            if required_errors:
+                st.warning(f"Google 報錯訊息：{list(set(required_errors))}")
             else:
-                # 抓取表單內部的紅字錯誤 (必填沒填、格式錯誤等)
-                alerts = re.findall(r'<div[^>]*role="alert"[^>]*>(.*?)</div>', res.text, re.IGNORECASE | re.DOTALL)
-                clean_alerts = []
-                for a in alerts:
-                    clean_text = re.sub(r'<[^>]+>', '', a).strip()
-                    if clean_text: clean_alerts.append(clean_text)
-                
-                if clean_alerts:
-                    st.warning(f"⚠️ Google 隱藏報錯訊息：{list(set(clean_alerts))}")
-                else:
-                    st.warning("⚠️ Google 擋下表單，且無具體報錯。請檢查是否有收集 Email 的隱藏欄位。")
+                st.warning("⚠️ 提交失敗。Google 退回了表單，這通常代表有【必填題目未填寫】或是填寫格式不符。")
                 
     wait_status.empty()
     return success_count
