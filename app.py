@@ -57,7 +57,7 @@ def parse_google_form(form_url):
         
     return parsed_questions
 
-# ================= 模組二：智譜 API (極度閹割防斷線版) =================
+# ================= 模組二：智譜 API (極速防斷線版) =================
 def generate_answers(questions, persona, total_count):
     all_answers = []
     batch_size = 1 
@@ -68,7 +68,6 @@ def generate_answers(questions, persona, total_count):
         current_count = min(batch_size, total_count - i)
         status_text.text(f"⏳ 正在與 AI 溝通生成數據... (目前進度: {i+1}/{total_count})")
         
-        # 🔥 終極瘦身指令：只准 AI 輸出 5 個 Key，徹底消滅 JSON 超載問題
         prompt = f"""
         你現在是一個自動化數據生成引擎。請根據以下人設：【{persona}】
         為我生成 1 份 JSON 格式的基本資料。
@@ -123,13 +122,16 @@ def generate_answers(questions, persona, total_count):
     status_text.text(f"✅ AI 數據生成完畢！共準備好 {len(all_answers)} 份資料。")
     return all_answers
 
-# ================= 模組三：並發提交模組 (Python 自動代打版) =================
+# ================= 模組三：並發提交模組 (精準順應邏輯版) =================
 def submit_form(form_url, parsed_questions, answers, duration_hours):
     post_url = form_url.replace("/viewform", "/formResponse")
     success_count = 0
     total_seconds = duration_hours * 3600
     avg_wait = total_seconds / len(answers) if len(answers) > 0 else 0
     wait_status = st.empty()
+    
+    # 預先準備好 DSE 隨機選修科菜單
+    dse_electives = ["物理", "化學", "生物", "經濟", "地理", "歷史", "資訊及通訊科技", "企業、會計與財務概論"]
     
     for idx, answer_set in enumerate(answers):
         session = requests.Session()
@@ -151,11 +153,21 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 
         base_payload = {}
         
-        # 將 AI 提供的 5 個欄位配對，其餘的 200 多題全靠 Python 自動補齊！
+        # 🕵️ 確認身分，啟動邏輯隔離
+        grade_val = flat_answers.get("年級", "") or flat_answers.get("年級 *", "")
+        is_student = "Year" in grade_val or "大" in grade_val
+        
+        # 隨機挑選該名學生的 DSE 選修科目
+        my_dse_subjects = ["中國語文", "英國語文", "數學", "通識教育"] + random.sample(dse_electives, 2)
+        
         for q in parsed_questions:
             q_title = q['title']
-            answer_val = None
             
+            # 🔥 極嚴格隔離防護：學生絕對不准碰「[畢業生填寫]」的隱藏題目
+            if is_student and "[畢業生填寫]" in q_title:
+                continue
+                
+            answer_val = None
             for ai_key, ai_val in flat_answers.items():
                 clean_q = re.sub(r'[^\w\s]', '', q_title)
                 clean_ai = re.sub(r'[^\w\s]', '', ai_key)
@@ -165,25 +177,36 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
             
             answer_str = str(answer_val).strip() if answer_val is not None else ""
             
-            # 🔥 全自動防呆填寫機制 (接管 AI 沒填的部分)
+            # 將 AI 給予的核心資料進行防呆矯正
             if answer_str:
                 if "入學年份" in q_title and answer_str not in ["2023", "2024", "2025", "2026"]: answer_str = random.choice(["2023", "2024", "2025", "2026"])
                 if "年級" in q_title and answer_str not in ["Year 1", "Year 2", "Year 3", "Year 4"]: answer_str = random.choice(["Year 1", "Year 2", "Year 3", "Year 4"])
                 base_payload[q['entry_id']] = answer_str
-            else:
-                if "五大職業" in q_title: base_payload[q['entry_id']] = "NA"
-                elif "姓名" in q_title: base_payload[q['entry_id']] = "張大X"
-                elif "學科全名" in q_title: base_payload[q['entry_id']] = "工程學"
-                elif "學系編號" in q_title: base_payload[q['entry_id']] = "JS6963"
-                elif "兄弟姊妹數目" in q_title: base_payload[q['entry_id']] = str(random.choice(["0", "1", "2"]))
-                elif "DSE成績" in q_title: base_payload[q['entry_id']] = str(random.randint(3, 5))
-                elif "(0" in q_title and "10" in q_title: base_payload[q['entry_id']] = str(random.randint(4, 8))
-                elif re.search(r'\([WSCIRE]\)', q_title): base_payload[q['entry_id']] = str(random.randint(4, 8))
-                elif "月薪" in q_title or "收入" in q_title: base_payload[q['entry_id']] = "20000"
+                continue
+                
+            # 🎯 精準自動代打 (順應表單邏輯，不再全填)
+            if "五大職業" in q_title: 
+                base_payload[q['entry_id']] = "NA"
+            elif "DSE成績" in q_title:
+                # 只有被選中的 6 個科目才送出資料，其他科目留白 (不加入 base_payload)
+                if any(subj in q_title for subj in my_dse_subjects):
+                    base_payload[q['entry_id']] = str(random.randint(3, 7)) # DSE 矩陣通常有7個層級(1,2,3,4,5,5*,5**)
+            elif "兄弟姊妹數目" in q_title: 
+                base_payload[q['entry_id']] = str(random.choice(["0", "1", "2"]))
+            elif "(0" in q_title and "10" in q_title: 
+                base_payload[q['entry_id']] = str(random.randint(4, 8))
+            elif re.search(r'\([WSCIRE]\)', q_title): 
+                base_payload[q['entry_id']] = str(random.randint(4, 8))
+            elif "[畢業生填寫]" in q_title:
+                # 只有非學生才會進到這裡，填入安全的預設值
+                if "月薪" in q_title or "收入" in q_title: base_payload[q['entry_id']] = "18000"
                 elif "時間" in q_title or "經驗" in q_title or "就業率" in q_title: base_payload[q['entry_id']] = "1"
-                elif "行業" in q_title or "職能" in q_title or "職位名稱" in q_title: base_payload[q['entry_id']] = "NA"
-                else: base_payload[q['entry_id']] = "NA"
+                elif "行業" in q_title or "職能" in q_title: base_payload[q['entry_id']] = "科技與工程"
+                elif "職位名稱" in q_title: base_payload[q['entry_id']] = "助理"
+            else:
+                pass # 未知的隱藏文字題，為了安全不再亂填 NA，直接跳過不送出
 
+        # 狀態機自動翻頁
         current_page_history = "0"
         current_draft_response = None
         is_success = False
@@ -215,7 +238,7 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 if error_msgs:
                     st.warning(f"🚨 Google 拒絕原因：【 {', '.join(error_msgs)} 】")
                 else:
-                    st.warning("🚨 伺服器拒絕前進。可能是格式限制錯誤。")
+                    st.warning("🚨 伺服器拒絕前進。請展開下方檢查是否還有未填的必填項。")
                     
                 with st.expander("點擊查看在該頁送出的資料詳情"):
                     st.json(step_payload)
@@ -277,7 +300,7 @@ if submitted:
                 questions = parse_google_form(form_url)
                 st.write(f"✅ 成功解析出 {len(questions)} 道題目！")
                 
-                st.write("🧠 正在呼叫 AI 生成模擬數據 (已啟用極速輕量模式)...")
+                st.write("🧠 正在呼叫 AI 生成模擬數據 (極速模式)...")
                 answers = generate_answers(questions, persona, target_count)
                 
                 if len(answers) > 0:
