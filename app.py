@@ -73,7 +73,7 @@ def parse_google_form(form_url):
         
     return parsed_questions
 
-# ================= 模組二：智譜 API (強制數量截斷版) =================
+# ================= 模組二：智譜 API (強制數量截斷與邏輯版) =================
 def generate_answers(questions, persona, total_count):
     all_answers = []
     batch_size = 1 
@@ -89,14 +89,12 @@ def generate_answers(questions, persona, total_count):
         為我生成 {current_count} 份 JSON 格式的基本資料。
         
         【極度嚴格限制】：
-        1. 請從 5 個科系組合中「隨機」挑選，確保每次生成的科系盡量不同。
-        2. 姓名請隨機生成不同的姓氏。
-        3. 你 **只能** 輸出以下 5 個 Key：
+        1. 你 **只能** 輸出以下 5 個 Key：
         - "姓名（不用填寫姓名最後一個字，如陳大X）"
         - "大學學科全名"
         - "大學學系編號"
         - "入學年份"
-        - "年級" (如果是學生請填寫 Year 1 到 Year 4，如果是已畢業工作的人，請直接填寫「畢業生」)
+        - "年級"
         
         請只輸出這 5 個欄位的 JSON 陣列。
         """
@@ -118,7 +116,6 @@ def generate_answers(questions, persona, total_count):
                 if isinstance(batch_answers, dict):
                     batch_answers = [batch_answers]
                 if isinstance(batch_answers, list):
-                    # 🔥 嚴格截斷：AI 敢買一送四，我們就強制切掉多餘的！
                     all_answers.extend(batch_answers[:current_count])
                     break 
                 else:
@@ -134,22 +131,22 @@ def generate_answers(questions, persona, total_count):
         time.sleep(1) 
         
     status_text.text(f"✅ AI 數據生成完畢！共準備好 {len(all_answers)} 份資料。")
-    return all_answers[:total_count] # 最後一道保險，確保總數絕對不多不少
+    return all_answers[:total_count] 
 
 # ================= 模組三：高落差亂數引擎與精準身分隔離 =================
 def get_smart_score(q_title, major, options):
     score = random.choice([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     
-    if "理學" in major or "工程" in major:
+    if "理學" in major or "工程" in major or "計算機" in major:
         if any(k in q_title for k in ["電腦", "邏輯", "科學", "力學", "電學", "工程", "數學"]): score = random.choice([8, 9, 10])
         elif any(k in q_title for k in ["文字", "藝術", "音樂", "繪畫"]): score = random.choice([0, 1, 2])
-    elif "工商" in major or "管理" in major:
+    elif "工商" in major or "管理" in major or "會計" in major or "金融" in major:
         if any(k in q_title for k in ["財經", "領袖", "商業", "高薪", "社交", "管理"]): score = random.choice([8, 9, 10])
         elif any(k in q_title for k in ["大自然", "物理"]): score = random.choice([0, 1, 2])
-    elif "傳理" in major or "文" in major:
-        if any(k in q_title for k in ["語言", "閱讀", "社交", "創作", "文字", "媒體"]): score = random.choice([8, 9, 10])
+    elif "傳理" in major or "文" in major or "時裝" in major:
+        if any(k in q_title for k in ["語言", "閱讀", "社交", "創作", "文字", "媒體", "繪畫"]): score = random.choice([8, 9, 10])
         elif any(k in q_title for k in ["數學", "程式", "工程", "力學"]): score = random.choice([0, 1, 2])
-    elif "醫" in major:
+    elif "醫" in major or "護理" in major or "藥劑" in major or "牙醫" in major:
         if any(k in q_title for k in ["科學", "病人", "醫藥", "生物", "價值"]): score = random.choice([8, 9, 10])
         elif any(k in q_title for k in ["物理", "程式"]): score = random.choice([2, 3, 4])
         
@@ -189,13 +186,34 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
             
         gen_major = ""
         gen_grade = ""
+        gen_year = ""
+        
         for k, v in flat_answers.items():
-            if "學科" in k or "學系" in k:
-                gen_major = str(v)
-            if "年級" in k:
-                gen_grade = str(v)
+            if "學科" in k or "學系" in k: gen_major = str(v)
+            if "年級" in k: gen_grade = str(v)
+            if "年份" in k: gen_year = str(v)
                 
         is_graduate = "畢業" in gen_grade or "grad" in gen_grade.lower()
+        
+        # 🔥 Python 強制接管邏輯：確保入學年份與年級 100% 精準對應
+        if not is_graduate:
+            if "2026" in gen_year: gen_grade = "Year 1"
+            elif "2025" in gen_year: gen_grade = "Year 2"
+            elif "2024" in gen_year: gen_grade = "Year 3"
+            elif "2023" in gen_year: gen_grade = "Year 4"
+            elif "Year 1" in gen_grade: gen_year = "2026"
+            elif "Year 2" in gen_grade: gen_year = "2025"
+            elif "Year 3" in gen_grade: gen_year = "2024"
+            elif "Year 4" in gen_grade: gen_year = "2023"
+            else:
+                gen_year = random.choice(["2023", "2024", "2025", "2026"])
+                year_map = {"2026": "Year 1", "2025": "Year 2", "2024": "Year 3", "2023": "Year 4"}
+                gen_grade = year_map[gen_year]
+                
+            # 將校正後的資料覆寫回變數中
+            for k in flat_answers.keys():
+                if "年級" in k: flat_answers[k] = gen_grade
+                if "年份" in k: flat_answers[k] = gen_year
                 
         my_dse_subjects = dse_core + random.sample(dse_electives_pool, 2)
         dse_cards = ["3", "4", "4", "5", "5*", "5**"] 
@@ -219,9 +237,9 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 if ai_val and any(ai_val in opt for opt in q['options']):
                     base_payload[q['entry_id']] = ai_val
                 elif "入學年份" in q_title:
-                    base_payload[q['entry_id']] = random.choice([o for o in q['options'] if "20" in o] or q['options'])
+                    base_payload[q['entry_id']] = gen_year if gen_year in q['options'] else random.choice([o for o in q['options'] if "20" in o] or q['options'])
                 elif "年級" in q_title:
-                    base_payload[q['entry_id']] = random.choice([o for o in q['options'] if "Year" in o] or q['options'])
+                    base_payload[q['entry_id']] = gen_grade if gen_grade in q['options'] else random.choice([o for o in q['options'] if "Year" in o] or q['options'])
                 elif "DSE成績" in q_title:
                     matched_subj = next((s for s in my_dse_subjects if s in q_title), None)
                     if matched_subj:
@@ -289,20 +307,44 @@ st.set_page_config(page_title="自動問卷生成系統", page_icon="🤖")
 st.title("🤖 Google Form 自動填寫系統")
 st.markdown("輸入 Google 表單連結與目標人設，系統將自動生成並批量提交資料。")
 
+# 🔥 核心升級：將 20 組真實 JUPAS 數據寫入 AI 大腦，強制邏輯關聯
 default_persona = """你現在是一位香港八大院校的受訪者，正在填寫一份關於升學與職涯意向的調查。
 身分請隨機決定是「在校大學生」還是「已全職工作3個月以上的畢業生」。
 
-【核心身分與代碼綁定】：
-- 組合1：學科全名填寫「理學」, JS code填寫「JS6901」
-- 組合2：學科全名填寫「內外全科醫學」, JS code填寫「JS6456」
-- 組合3：學科全名填寫「工程學」, JS code填寫「JS6963」
-- 組合4：學科全名填寫「工商管理學」, JS code填寫「JS6755」
-- 組合5：學科全名填寫「傳理學」, JS code填寫「JS2310」
+【極度嚴格的欄位邏輯】：
+1. 入學年份與年級必須嚴格對應：
+   - 入學年份 2026 對應 年級「Year 1」
+   - 入學年份 2025 對應 年級「Year 2」
+   - 入學年份 2024 對應 年級「Year 3」
+   - 入學年份 2023 對應 年級「Year 4」
+   - 若為畢業生，入學年份請隨機填寫 2019~2022，年級填寫「畢業生」。
+
+【核心身分與代碼綁定】（請務必從以下 20 個真實組合中「隨機」挑選一組）：
+- 組合1：學科全名「內外全科醫學士」, JS code「JS6456」
+- 組合2：學科全名「法學士」, JS code「JS6406」
+- 組合3：學科全名「工商管理學學士」, JS code「JS6755」
+- 組合4：學科全名「工學學士(土木工程)」, JS code「JS6353」
+- 組合5：學科全名「社會工作學學士」, JS code「JS6731」
+- 組合6：學科全名「專業會計學」, JS code「JS4240」
+- 組合7：學科全名「計算機科學與工程」, JS code「JS4412」
+- 組合8：學科全名「中國語言及文學」, JS code「JS4018」
+- 組合9：學科全名「藥劑學」, JS code「JS4525」
+- 組合10：學科全名「工商管理學士（環球商業管理）」, JS code「JS5313」
+- 組合11：學科全名「理學士（量化金融學）」, JS code「JS5332」
+- 組合12：學科全名「理學士（環境管理及科技）」, JS code「JS5812」
+- 組合13：學科全名「護理學(榮譽)理學士」, JS code「JS3648」
+- 組合14：學科全名「地產及建設測量學(榮譽)理學士」, JS code「JS3789」
+- 組合15：學科全名「生物醫學工程(榮譽)理學士」, JS code「JS3150」
+- 組合16：學科全名「時裝(榮譽)文學士」, JS code「JS3050」
+- 組合17：學科全名「法律學學士」, JS code「JS1061」
+- 組合18：學科全名「計算機科學理學士」, JS code「JS1204」
+- 組合19：學科全名「牙醫學士」, JS code「JS6107」
+- 組合20：學科全名「電子工程學」, JS code「JS4434」
 """
 
 with st.form("auto_form"):
     form_url = st.text_input("Google 表單連結 (必須是 /viewform 結尾)")
-    persona = st.text_area("填寫方向與偏好設定", value=default_persona, height=150)
+    persona = st.text_area("填寫方向與偏好設定", value=default_persona, height=250)
     col1, col2 = st.columns(2)
     with col1:
         target_count = st.number_input("需要生成的問卷數量", min_value=1, max_value=500, value=3)
