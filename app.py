@@ -223,13 +223,14 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
         for q in parsed_questions:
             q_title = q['title']
             
-            # 🔥 終極在校生黑名單：遇到這些畢業生專屬題目，學生身分直接跳過不送出！
+            # 🔥 終極在校生黑名單：增加所有隱形畢業生題目的關鍵字
             if not is_graduate:
                 grad_keywords = [
                     "[畢業生填寫]", "五大職業", "接駁廣泛", "薪酬掛", "輕鬆度過", 
                     "大過天", "大學品牌", "成為專業人士", "(W)", "(S)", "(C)", "(I)", "(R)", "(E)"
                 ]
-                if any(kw in q_title for kw in grad_keywords):
+                # 「請選擇」如果是這幾題矩陣的總標題，也一併跳過
+                if any(kw in q_title for kw in grad_keywords) or q_title.strip() == "請選擇":
                     continue
             
             ai_val = None
@@ -263,7 +264,6 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 if ai_val:
                     base_payload[q['entry_id']] = ai_val
                 elif "五大職業" in q_title: 
-                    # 只有畢業生會跑到這一行，隨機分配安全職業
                     base_payload[q['entry_id']] = random.choice(["資訊科技", "金融", "教育", "工程", "市場策劃", "公營機構"])
                 elif "姓名" in q_title or "全名" in q_title: base_payload[q['entry_id']] = "張大X"
                 elif "編號" in q_title: base_payload[q['entry_id']] = "JS6963"
