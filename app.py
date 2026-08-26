@@ -96,9 +96,9 @@ def generate_answers(questions, persona, total_count):
         - "大學學科全名"
         - "大學學系編號"
         - "入學年份"
-        - "年級"
+        - "年級" (如果是學生請填寫 Year 1 到 Year 4，如果是已畢業工作的人，請直接填寫「畢業生」)
         
-        請只輸出這 5 個欄位的 JSON 陣列，例如 [{{"姓名...": "王小X", ...}}]。
+        請只輸出這 5 個欄位的 JSON 陣列。
         """
         
         max_retries = 3
@@ -135,25 +135,27 @@ def generate_answers(questions, persona, total_count):
     status_text.text(f"✅ AI 數據生成完畢！共準備好 {len(all_answers)} 份資料。")
     return all_answers
 
-# ================= 模組三：性格演算法與精準波動提交 =================
+# ================= 模組三：高落差亂數引擎與精準身分隔離 =================
 def get_smart_score(q_title, major, options):
-    score = random.randint(4, 6) # 每一題都會重新骰一次，產生波動感
+    # 打破平庸，0到10分全頻譜大亂跳
+    score = random.choice([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     
+    # 科系極端偏好 (創造真實的波峰波谷)
     if "理學" in major or "工程" in major:
-        if any(k in q_title for k in ["電腦", "邏輯", "科學", "力學", "電學", "工程", "數學"]): score = random.randint(8, 10)
-        if any(k in q_title for k in ["文字", "藝術", "音樂", "繪畫"]): score = random.randint(0, 3)
+        if any(k in q_title for k in ["電腦", "邏輯", "科學", "力學", "電學", "工程", "數學"]): score = random.choice([8, 9, 10])
+        elif any(k in q_title for k in ["文字", "藝術", "音樂", "繪畫"]): score = random.choice([0, 1, 2])
     elif "工商" in major or "管理" in major:
-        if any(k in q_title for k in ["財經", "領袖", "商業", "高薪", "社交", "管理"]): score = random.randint(8, 10)
-        if any(k in q_title for k in ["大自然", "物理"]): score = random.randint(1, 3)
+        if any(k in q_title for k in ["財經", "領袖", "商業", "高薪", "社交", "管理"]): score = random.choice([8, 9, 10])
+        elif any(k in q_title for k in ["大自然", "物理"]): score = random.choice([0, 1, 2])
     elif "傳理" in major or "文" in major:
-        if any(k in q_title for k in ["語言", "閱讀", "社交", "創作", "文字", "媒體"]): score = random.randint(8, 10)
-        if any(k in q_title for k in ["數學", "程式", "工程", "力學"]): score = random.randint(0, 3)
+        if any(k in q_title for k in ["語言", "閱讀", "社交", "創作", "文字", "媒體"]): score = random.choice([8, 9, 10])
+        elif any(k in q_title for k in ["數學", "程式", "工程", "力學"]): score = random.choice([0, 1, 2])
     elif "醫" in major:
-        if any(k in q_title for k in ["科學", "病人", "醫藥", "生物", "價值"]): score = random.randint(8, 10)
-        if any(k in q_title for k in ["物理", "程式"]): score = random.randint(2, 5)
+        if any(k in q_title for k in ["科學", "病人", "醫藥", "生物", "價值"]): score = random.choice([8, 9, 10])
+        elif any(k in q_title for k in ["物理", "程式"]): score = random.choice([2, 3, 4])
         
     if any(k in q_title for k in ["壓力低", "工作與生活平衡", "準時下班", "自由", "快樂"]):
-        score = random.randint(8, 10)
+        score = random.choice([8, 9, 10])
         
     score_str = str(score)
     if options:
@@ -187,20 +189,29 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
             else: flat_answers[key] = str(value)
             
         gen_major = ""
+        gen_grade = ""
         for k, v in flat_answers.items():
             if "學科" in k or "學系" in k:
                 gen_major = str(v)
-                break
+            if "年級" in k:
+                gen_grade = str(v)
                 
-        # 🔥 真實成績單生成器：決定這名學生的 6 科以及高低不同的成績分布
+        # 判斷是否為畢業生
+        is_graduate = "畢業" in gen_grade or "grad" in gen_grade.lower()
+                
+        # DSE 絕對發牌系統
         my_dse_subjects = dse_core + random.sample(dse_electives_pool, 2)
-        dse_score_pool = ["5**", "5*", "5", "5", "4", "4"] # 準備 6 個高低不同的分數
-        random.shuffle(dse_score_pool) # 像洗牌一樣洗亂
-        my_dse_score_map = dict(zip(my_dse_subjects, dse_score_pool)) # 分發給 6 個科目
+        dse_cards = ["3", "4", "4", "5", "5*", "5**"] 
+        random.shuffle(dse_cards) 
+        my_dse_score_map = dict(zip(my_dse_subjects, dse_cards)) 
                 
         base_payload = {}
         for q in parsed_questions:
             q_title = q['title']
+            
+            # 🔥 身分閘門：如果是在校學生，直接跳過所有帶有 [畢業生填寫] 的題目！
+            if not is_graduate and "[畢業生填寫]" in q_title:
+                continue
             
             ai_val = None
             for ai_key, ai_val_iter in flat_answers.items():
@@ -216,17 +227,14 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 elif "年級" in q_title:
                     base_payload[q['entry_id']] = random.choice([o for o in q['options'] if "Year" in o] or q['options'])
                 elif "DSE成績" in q_title:
-                    # 💡 DSE 擬真化：從成績單裡抓出對應的真實波動分數
                     matched_subj = next((s for s in my_dse_subjects if s in q_title), None)
                     if matched_subj:
                         grade = my_dse_score_map[matched_subj]
                         if grade in q['options']:
                             base_payload[q['entry_id']] = grade
                         else:
-                            # 備用安全分數
                             safe_dse = [o for o in q['options'] if o in ["3", "4", "5", "5*", "5**"]]
                             base_payload[q['entry_id']] = random.choice(safe_dse if safe_dse else q['options'])
-                    # 沒考的科目一律不加入 payload，在表單裡就會是完美的留白！
                 else:
                     if any(x in q['options'] for x in ["0", "1", "2", "3", "7", "8", "9", "10"]):
                         base_payload[q['entry_id']] = get_smart_score(q_title, gen_major, q['options'])
@@ -235,11 +243,14 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
             else:
                 if ai_val:
                     base_payload[q['entry_id']] = ai_val
+                elif "五大職業" in q_title: 
+                    # 五大職業對所有人都必填，在校生填 NA，畢業生填隨機職業
+                    base_payload[q['entry_id']] = "NA" if not is_graduate else random.choice(["資訊科技", "金融", "教育", "工程"])
                 elif "姓名" in q_title or "全名" in q_title: base_payload[q['entry_id']] = "張大X"
                 elif "編號" in q_title: base_payload[q['entry_id']] = "JS6963"
-                elif "月薪" in q_title or "收入" in q_title: base_payload[q['entry_id']] = str(random.randint(18000, 25000))
+                elif "月薪" in q_title or "收入" in q_title: base_payload[q['entry_id']] = str(random.randint(18000, 28000))
                 elif "時間" in q_title or "經驗" in q_title or "就業率" in q_title: base_payload[q['entry_id']] = "1"
-                elif "行業" in q_title or "職能" in q_title or "職位名稱" in q_title: base_payload[q['entry_id']] = "資訊科技"
+                elif "行業" in q_title or "職能" in q_title or "職位名稱" in q_title: base_payload[q['entry_id']] = random.choice(["資訊科技", "工程", "市場營銷", "金融"])
                 else: base_payload[q['entry_id']] = "NA"
 
         # 提交程序
@@ -285,6 +296,7 @@ st.title("🤖 Google Form 自動填寫系統")
 st.markdown("輸入 Google 表單連結與目標人設，系統將自動生成並批量提交資料。")
 
 default_persona = """你現在是一位香港八大院校的受訪者，正在填寫一份關於升學與職涯意向的調查。
+身分請隨機決定是「在校大學生」還是「已全職工作3個月以上的畢業生」。
 
 【核心身分與代碼綁定】：
 - 組合1：學科全名填寫「理學」, JS code填寫「JS6901」
@@ -318,7 +330,7 @@ if submitted:
                 answers = generate_answers(questions, persona, target_count)
                 
                 if len(answers) > 0:
-                    st.write("🚀 正在啟動「波動擬真版」提交程序...")
+                    st.write("🚀 正在啟動「精準身分隔離版」提交程序...")
                     success_count = submit_form(form_url, questions, answers, duration_hours)
                     if success_count > 0:
                         status.update(label=f"任務完成！成功提交 {success_count}/{target_count} 份。", state="complete", expanded=False)
