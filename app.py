@@ -11,7 +11,7 @@ from zhipuai import ZhipuAI
 ZHIPU_API_KEY = "2040bad6a4de457db8783082ea9120bc.FDSw7nPPtfv8KCaD"
 CLIENT = ZhipuAI(api_key=ZHIPU_API_KEY)
 
-# ================= 模組一：自動解析表單結構 =================
+# ================= 模組一：自動解析表單結構與分頁 =================
 def parse_google_form(form_url):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -30,11 +30,17 @@ def parse_google_form(form_url):
 
     data = json.loads(match.group(1))
     parsed_questions = []
+    page_index = 0  # 🔥 上帝視角：記錄目前在第幾頁
     
     try:
         questions_data = data[1][1]
         for q in questions_data:
             try:
+                item_type = q[3]
+                if item_type == 8:  # Google 表單底層代碼：8 代表「分頁符號」
+                    page_index += 1
+                    continue
+                    
                 main_title = q[1]
                 if len(q) > 4 and isinstance(q[4], list):
                     for sub_q in q[4]:
@@ -49,7 +55,8 @@ def parse_google_form(form_url):
                             sub_title = f"{main_title}_{sub_q[0]}"
 
                         final_title = f"{main_title} - {sub_title}" if sub_title and sub_title != main_title else main_title
-                        parsed_questions.append({"title": final_title, "entry_id": entry_id})
+                        # 🔥 記錄每一題專屬的頁碼
+                        parsed_questions.append({"title": final_title, "entry_id": entry_id, "page": page_index})
             except (IndexError, TypeError):
                 continue
     except (IndexError, TypeError) as e:
@@ -73,14 +80,14 @@ def generate_answers(questions, persona, total_count):
         為我生成 1 份 JSON 格式的基本資料。
         
         【極度嚴格限制】：
-        為避免字數超載斷線，你 **只能** 輸出以下 5 個 Key，絕對禁止增加其他任何欄位！
+        你 **只能** 輸出以下 5 個 Key，絕對禁止增加其他任何欄位！
         - "姓名（不用填寫姓名最後一個字，如陳大X）"
         - "大學學科全名"
         - "大學學系編號"
         - "入學年份"
         - "年級"
         
-        請只輸出包含這 5 個欄位的 JSON 陣列，例如 [{{"姓名...": "王小X", ...}}]，不要輸出任何其他廢話！
+        請只輸出這 5 個欄位的 JSON，例如 [{{"姓名...": "王小X", ...}}]，不要輸出任何廢話！
         """
         
         max_retries = 3
@@ -122,13 +129,16 @@ def generate_answers(questions, persona, total_count):
     status_text.text(f"✅ AI 數據生成完畢！共準備好 {len(all_answers)} 份資料。")
     return all_answers
 
-# ================= 模組三：並發提交模組 (真實瀏覽器視覺版) =================
+# ================= 模組三：並發提交模組 (上帝視角狀態機版) =================
 def submit_form(form_url, parsed_questions, answers, duration_hours):
     post_url = form_url.replace("/viewform", "/formResponse")
     success_count = 0
     total_seconds = duration_hours * 3600
     avg_wait = total_seconds / len(answers) if len(answers) > 0 else 0
     wait_status = st.empty()
+    
+    # 決定這次要填哪些 DSE 科目 (核心4科 + 隨機2科選修)
+    dse_subjects_to_fill = ["中國語文", "英國語文", "數學", "通識教育", random.choice(["物理", "生物", "化學"]), random.choice(["經濟", "地理", "歷史", "資訊及通訊科技"])]
     
     for idx, answer_set in enumerate(answers):
         session = requests.Session()
@@ -144,7 +154,7 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
             elif isinstance(value, list): flat_answers[key] = ", ".join([str(v) for v in value])
             else: flat_answers[key] = str(value)
                 
-        # 1. 建立萬能知識庫 (準備好所有可能問到的答案)
+        # 1. 建立萬能知識庫
         base_payload = {}
         for q in parsed_questions:
             q_title = q['title']
@@ -164,37 +174,49 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 if "年級" in q_title and answer_str not in ["Year 1", "Year 2", "Year 3", "Year 4"]: answer_str = random.choice(["Year 1", "Year 2", "Year 3", "Year 4"])
                 base_payload[q['entry_id']] = answer_str
             else:
-                if "五大職業" in q_title: base_payload[q['entry_id']] = "NA"
-                elif "姓名" in q_title: base_payload[q['entry_id']] = "張大X"
-                elif "學科全名" in q_title: base_payload[q['entry_id']] = "工程學"
-                elif "學系編號" in q_title: base_payload[q['entry_id']] = "JS6963"
-                elif "兄弟姊妹數目" in q_title: base_payload[q['entry_id']] = random.choice(["0", "1", "2"])
-                elif "DSE成績" in q_title: base_payload[q['entry_id']] = random.choice(["2", "3", "4", "5", "5*", "5**"]) # 嚴格對齊 DSE 合法選項
-                elif "(0" in q_title and "10" in q_title: base_payload[q['entry_id']] = str(random.randint(4, 8))
-                elif re.search(r'\([WSCIRE]\)', q_title): base_payload[q['entry_id']] = str(random.randint(4, 8))
-                elif "月薪" in q_title or "收入" in q_title: base_payload[q['entry_id']] = "20000"
-                elif "時間" in q_title or "經驗" in q_title or "就業率" in q_title: base_payload[q['entry_id']] = "1"
-                elif "行業" in q_title or "職能" in q_title or "職位名稱" in q_title: base_payload[q['entry_id']] = "NA"
-                else: base_payload[q['entry_id']] = "NA"
+                if "五大職業" in q_title: 
+                    base_payload[q['entry_id']] = "NA"
+                elif "姓名" in q_title: 
+                    base_payload[q['entry_id']] = "張大X"
+                elif "學科全名" in q_title: 
+                    base_payload[q['entry_id']] = "工程學"
+                elif "學系編號" in q_title: 
+                    base_payload[q['entry_id']] = "JS6963"
+                elif "兄弟姊妹數目" in q_title: 
+                    base_payload[q['entry_id']] = random.choice(["0", "1", "2"])
+                elif "DSE成績" in q_title: 
+                    # 🔥 DSE 聰明選填：只填選中的科目，沒選中的直接略過，不加入 payload
+                    if any(subj in q_title for subj in dse_subjects_to_fill):
+                        base_payload[q['entry_id']] = random.choice(["2", "3", "4", "5", "5*", "5**"])
+                elif "(0" in q_title and "10" in q_title: 
+                    base_payload[q['entry_id']] = str(random.randint(4, 8))
+                elif re.search(r'\([WSCIRE]\)', q_title): 
+                    base_payload[q['entry_id']] = str(random.randint(4, 8))
+                elif "月薪" in q_title or "收入" in q_title: 
+                    base_payload[q['entry_id']] = "20000"
+                elif "時間" in q_title or "經驗" in q_title or "就業率" in q_title: 
+                    base_payload[q['entry_id']] = "1"
+                elif "行業" in q_title or "職能" in q_title or "職位名稱" in q_title: 
+                    base_payload[q['entry_id']] = "NA"
+                else: 
+                    base_payload[q['entry_id']] = "NA"
 
-        # 2. 啟動瀏覽器狀態機
+        # 2. 啟動上帝視角狀態機
         init_res = session.get(form_url)
         current_html = init_res.text
         is_success = False
         
+        current_page_history = "0"
+        
         for step in range(15):
-            # 抓取目前這頁的權杖
             fbzx_match = re.search(r'name="fbzx"\s+value="([^"]*)"', current_html)
             current_fbzx = fbzx_match.group(1) if fbzx_match else ""
             
             draft_match = re.search(r'name="draftResponse"\s+value="([^"]*)"', current_html)
             current_draft_response = html.unescape(draft_match.group(1)) if draft_match else ""
             
-            ph_match = re.search(r'name="pageHistory"\s+value="([^"]*)"', current_html)
-            current_page_history = ph_match.group(1) if ph_match else "0"
-
-            # 🔥 核心視覺模擬：抓取「畫面上真實存在的輸入框」
-            fields_on_page = list(set(re.findall(r'name="(entry\.\d+)"', current_html)))
+            # 取得目前的目標頁碼 (例如 "0,1,3" -> 目標頁是 3)
+            current_page_index = int(current_page_history.split(',')[-1])
             
             step_payload = {
                 "pageHistory": current_page_history,
@@ -203,10 +225,10 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
             if current_fbzx: step_payload['fbzx'] = current_fbzx
             if current_draft_response: step_payload['draftResponse'] = current_draft_response
             
-            # 🔥 只把這頁看得到的題目交卷！完美繞過透視防禦
-            for field in fields_on_page:
-                if field in base_payload:
-                    step_payload[field] = base_payload[field]
+            # 🔥 上帝抽牌：只把「屬於這一頁」的題目抽出來交卷
+            for q in parsed_questions:
+                if q['page'] == current_page_index and q['entry_id'] in base_payload:
+                    step_payload[q['entry_id']] = base_payload[q['entry_id']]
             
             res = session.post(post_url, data=step_payload)
             
@@ -225,12 +247,13 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 if error_msgs:
                     st.warning(f"🚨 Google 拒絕原因：【 {', '.join(error_msgs)} 】")
                 else:
-                    st.warning("🚨 伺服器拒絕前進。請展開下方，這才是【真正只在這頁送出】的資料。")
+                    st.warning("🚨 伺服器拒絕前進。請展開下方，檢查是否有遺漏的必填項。")
                     
                 with st.expander(f"點擊查看第 {current_page_history} 頁送出的資料詳情"):
                     st.json(step_payload)
                 break
                 
+            current_page_history = new_ph
             current_html = res.text
 
         if is_success:
@@ -289,7 +312,7 @@ if submitted:
                 answers = generate_answers(questions, persona, target_count)
                 
                 if len(answers) > 0:
-                    st.write("🚀 正在啟動「真實瀏覽器視覺版」提交程序...")
+                    st.write("🚀 正在啟動「上帝視角分頁版」提交程序...")
                     success_count = submit_form(form_url, questions, answers, duration_hours)
                     if success_count > 0:
                         status.update(label=f"任務完成！成功提交 {success_count}/{target_count} 份。", state="complete", expanded=False)
