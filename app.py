@@ -229,7 +229,7 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                     "[畢業生填寫]", "五大職業", "接駁廣泛", "薪酬掛", "輕鬆度過", 
                     "大過天", "大學品牌", "成為專業人士", "(W)", "(S)", "(C)", "(I)", "(R)", "(E)", "請選擇"
                 ]
-                if any(kw in q_title for kw in grad_keywords):
+                if any(kw in q_title for kw in grad_keywords) or q_title.strip() == "請選擇":
                     continue
             
             ai_val = None
@@ -280,16 +280,12 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
         if current_fbzx: step_payload['fbzx'] = current_fbzx
         step_payload.update(base_payload)
         
+        # 執行 POST
         res = session.post(post_url, data=step_payload)
         
-        error_msgs = re.findall(r'data-error-message="([^"]+)"', res.text)
-        error_msgs = list(set([e for e in error_msgs if e.strip()]))
-        
-        is_success = False
-        if not error_msgs and ("formResponse" in res.url or 'class="vHW8K"' in res.text or 'freebirdFormviewerViewResponseConfirmationMessage' in res.text):
-            is_success = True
-        elif not error_msgs:
-            is_success = True
+        # 🔥 嚴格驗證成功條件：必須看到表單的「已記錄你的回覆」等成功關鍵字
+        success_keywords = ['freebirdFormviewerViewResponseConfirmationMessage', '已記錄你的回覆', 'Your response has been recorded', '已經收到']
+        is_success = any(kw in res.text for kw in success_keywords)
 
         if is_success:
             success_count += 1
@@ -301,9 +297,15 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 else:
                     time.sleep(0.5)
         else:
-            st.error(f"第 {idx+1} 份問卷提交異常！")
-            if error_msgs:
-                st.warning(f"🚨 Google 拒絕原因：【 {', '.join(error_msgs)} 】")
+            # 🚨 如果失敗，印出真正的原因
+            st.error(f"❌ 第 {idx+1} 份問卷被 Google 拒絕！身分：{'畢業生' if is_graduate else '在校生'}")
+            
+            # 嘗試抓取 Google 返回的必填錯誤提示
+            required_errors = re.findall(r'data-error-message="([^"]+)"', res.text)
+            if required_errors:
+                st.warning(f"Google 報錯訊息：{list(set(required_errors))}")
+            else:
+                st.warning("⚠️ Google 擋下表單，且無具體報錯。最大可能是：\n1. 你跳過沒填的題目在表單裡被設為「必填」。\n2. 你的表單有「下一頁」的分頁設計。")
                 
     wait_status.empty()
     return success_count
