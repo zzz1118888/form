@@ -122,16 +122,13 @@ def generate_answers(questions, persona, total_count):
     status_text.text(f"✅ AI 數據生成完畢！共準備好 {len(all_answers)} 份資料。")
     return all_answers
 
-# ================= 模組三：並發提交模組 (精準順應邏輯版) =================
+# ================= 模組三：並發提交模組 (真實瀏覽器視覺版) =================
 def submit_form(form_url, parsed_questions, answers, duration_hours):
     post_url = form_url.replace("/viewform", "/formResponse")
     success_count = 0
     total_seconds = duration_hours * 3600
     avg_wait = total_seconds / len(answers) if len(answers) > 0 else 0
     wait_status = st.empty()
-    
-    # 預先準備好 DSE 隨機選修科菜單
-    dse_electives = ["物理", "化學", "生物", "經濟", "地理", "歷史", "資訊及通訊科技", "企業、會計與財務概論"]
     
     for idx, answer_set in enumerate(answers):
         session = requests.Session()
@@ -140,10 +137,6 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
             'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8'
         })
         
-        init_res = session.get(form_url)
-        fbzx_match = re.search(r'name="fbzx"\s+value="([^"]*)"', init_res.text)
-        current_fbzx = fbzx_match.group(1) if fbzx_match else ""
-        
         flat_answers = {}
         for key, value in answer_set.items():
             if isinstance(value, dict):
@@ -151,23 +144,12 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
             elif isinstance(value, list): flat_answers[key] = ", ".join([str(v) for v in value])
             else: flat_answers[key] = str(value)
                 
+        # 1. 建立萬能知識庫 (準備好所有可能問到的答案)
         base_payload = {}
-        
-        # 🕵️ 確認身分，啟動邏輯隔離
-        grade_val = flat_answers.get("年級", "") or flat_answers.get("年級 *", "")
-        is_student = "Year" in grade_val or "大" in grade_val
-        
-        # 隨機挑選該名學生的 DSE 選修科目
-        my_dse_subjects = ["中國語文", "英國語文", "數學", "通識教育"] + random.sample(dse_electives, 2)
-        
         for q in parsed_questions:
             q_title = q['title']
-            
-            # 🔥 極嚴格隔離防護：學生絕對不准碰「[畢業生填寫]」的隱藏題目
-            if is_student and "[畢業生填寫]" in q_title:
-                continue
-                
             answer_val = None
+            
             for ai_key, ai_val in flat_answers.items():
                 clean_q = re.sub(r'[^\w\s]', '', q_title)
                 clean_ai = re.sub(r'[^\w\s]', '', ai_key)
@@ -177,46 +159,54 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
             
             answer_str = str(answer_val).strip() if answer_val is not None else ""
             
-            # 將 AI 給予的核心資料進行防呆矯正
             if answer_str:
                 if "入學年份" in q_title and answer_str not in ["2023", "2024", "2025", "2026"]: answer_str = random.choice(["2023", "2024", "2025", "2026"])
                 if "年級" in q_title and answer_str not in ["Year 1", "Year 2", "Year 3", "Year 4"]: answer_str = random.choice(["Year 1", "Year 2", "Year 3", "Year 4"])
                 base_payload[q['entry_id']] = answer_str
-                continue
-                
-            # 🎯 精準自動代打 (順應表單邏輯，不再全填)
-            if "五大職業" in q_title: 
-                base_payload[q['entry_id']] = "NA"
-            elif "DSE成績" in q_title:
-                # 只有被選中的 6 個科目才送出資料，其他科目留白 (不加入 base_payload)
-                if any(subj in q_title for subj in my_dse_subjects):
-                    base_payload[q['entry_id']] = str(random.randint(3, 7)) # DSE 矩陣通常有7個層級(1,2,3,4,5,5*,5**)
-            elif "兄弟姊妹數目" in q_title: 
-                base_payload[q['entry_id']] = str(random.choice(["0", "1", "2"]))
-            elif "(0" in q_title and "10" in q_title: 
-                base_payload[q['entry_id']] = str(random.randint(4, 8))
-            elif re.search(r'\([WSCIRE]\)', q_title): 
-                base_payload[q['entry_id']] = str(random.randint(4, 8))
-            elif "[畢業生填寫]" in q_title:
-                # 只有非學生才會進到這裡，填入安全的預設值
-                if "月薪" in q_title or "收入" in q_title: base_payload[q['entry_id']] = "18000"
-                elif "時間" in q_title or "經驗" in q_title or "就業率" in q_title: base_payload[q['entry_id']] = "1"
-                elif "行業" in q_title or "職能" in q_title: base_payload[q['entry_id']] = "科技與工程"
-                elif "職位名稱" in q_title: base_payload[q['entry_id']] = "助理"
             else:
-                pass # 未知的隱藏文字題，為了安全不再亂填 NA，直接跳過不送出
+                if "五大職業" in q_title: base_payload[q['entry_id']] = "NA"
+                elif "姓名" in q_title: base_payload[q['entry_id']] = "張大X"
+                elif "學科全名" in q_title: base_payload[q['entry_id']] = "工程學"
+                elif "學系編號" in q_title: base_payload[q['entry_id']] = "JS6963"
+                elif "兄弟姊妹數目" in q_title: base_payload[q['entry_id']] = random.choice(["0", "1", "2"])
+                elif "DSE成績" in q_title: base_payload[q['entry_id']] = random.choice(["2", "3", "4", "5", "5*", "5**"]) # 嚴格對齊 DSE 合法選項
+                elif "(0" in q_title and "10" in q_title: base_payload[q['entry_id']] = str(random.randint(4, 8))
+                elif re.search(r'\([WSCIRE]\)', q_title): base_payload[q['entry_id']] = str(random.randint(4, 8))
+                elif "月薪" in q_title or "收入" in q_title: base_payload[q['entry_id']] = "20000"
+                elif "時間" in q_title or "經驗" in q_title or "就業率" in q_title: base_payload[q['entry_id']] = "1"
+                elif "行業" in q_title or "職能" in q_title or "職位名稱" in q_title: base_payload[q['entry_id']] = "NA"
+                else: base_payload[q['entry_id']] = "NA"
 
-        # 狀態機自動翻頁
-        current_page_history = "0"
-        current_draft_response = None
+        # 2. 啟動瀏覽器狀態機
+        init_res = session.get(form_url)
+        current_html = init_res.text
         is_success = False
         
         for step in range(15):
-            step_payload = base_payload.copy()
-            step_payload['pageHistory'] = current_page_history
-            step_payload['fvv'] = "1"
+            # 抓取目前這頁的權杖
+            fbzx_match = re.search(r'name="fbzx"\s+value="([^"]*)"', current_html)
+            current_fbzx = fbzx_match.group(1) if fbzx_match else ""
+            
+            draft_match = re.search(r'name="draftResponse"\s+value="([^"]*)"', current_html)
+            current_draft_response = html.unescape(draft_match.group(1)) if draft_match else ""
+            
+            ph_match = re.search(r'name="pageHistory"\s+value="([^"]*)"', current_html)
+            current_page_history = ph_match.group(1) if ph_match else "0"
+
+            # 🔥 核心視覺模擬：抓取「畫面上真實存在的輸入框」
+            fields_on_page = list(set(re.findall(r'name="(entry\.\d+)"', current_html)))
+            
+            step_payload = {
+                "pageHistory": current_page_history,
+                "fvv": "1"
+            }
             if current_fbzx: step_payload['fbzx'] = current_fbzx
             if current_draft_response: step_payload['draftResponse'] = current_draft_response
+            
+            # 🔥 只把這頁看得到的題目交卷！完美繞過透視防禦
+            for field in fields_on_page:
+                if field in base_payload:
+                    step_payload[field] = base_payload[field]
             
             res = session.post(post_url, data=step_payload)
             
@@ -225,9 +215,6 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 break
                 
             new_ph_match = re.search(r'name="pageHistory"\s+value="([^"]*)"', res.text)
-            new_fbzx_match = re.search(r'name="fbzx"\s+value="([^"]*)"', res.text)
-            new_draft_match = re.search(r'name="draftResponse"\s+value="([^"]*)"', res.text)
-            
             new_ph = new_ph_match.group(1) if new_ph_match else current_page_history
             
             if new_ph == current_page_history:
@@ -238,15 +225,13 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 if error_msgs:
                     st.warning(f"🚨 Google 拒絕原因：【 {', '.join(error_msgs)} 】")
                 else:
-                    st.warning("🚨 伺服器拒絕前進。請展開下方檢查是否還有未填的必填項。")
+                    st.warning("🚨 伺服器拒絕前進。請展開下方，這才是【真正只在這頁送出】的資料。")
                     
-                with st.expander("點擊查看在該頁送出的資料詳情"):
+                with st.expander(f"點擊查看第 {current_page_history} 頁送出的資料詳情"):
                     st.json(step_payload)
                 break
                 
-            current_page_history = new_ph
-            if new_fbzx_match: current_fbzx = new_fbzx_match.group(1)
-            if new_draft_match: current_draft_response = html.unescape(new_draft_match.group(1))
+            current_html = res.text
 
         if is_success:
             success_count += 1
@@ -304,7 +289,7 @@ if submitted:
                 answers = generate_answers(questions, persona, target_count)
                 
                 if len(answers) > 0:
-                    st.write("🚀 正在啟動「真人翻頁模擬器」提交程序...")
+                    st.write("🚀 正在啟動「真實瀏覽器視覺版」提交程序...")
                     success_count = submit_form(form_url, questions, answers, duration_hours)
                     if success_count > 0:
                         status.update(label=f"任務完成！成功提交 {success_count}/{target_count} 份。", state="complete", expanded=False)
