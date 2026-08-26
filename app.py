@@ -73,7 +73,7 @@ def parse_google_form(form_url):
         
     return parsed_questions
 
-# ================= 模組二：智譜 API (多樣化生成版) =================
+# ================= 模組二：智譜 API (強制數量截斷版) =================
 def generate_answers(questions, persona, total_count):
     all_answers = []
     batch_size = 1 
@@ -86,7 +86,7 @@ def generate_answers(questions, persona, total_count):
         
         prompt = f"""
         你現在是一個自動化數據生成引擎。請根據以下人設：【{persona}】
-        為我生成 1 份 JSON 格式的基本資料。
+        為我生成 {current_count} 份 JSON 格式的基本資料。
         
         【極度嚴格限制】：
         1. 請從 5 個科系組合中「隨機」挑選，確保每次生成的科系盡量不同。
@@ -118,7 +118,8 @@ def generate_answers(questions, persona, total_count):
                 if isinstance(batch_answers, dict):
                     batch_answers = [batch_answers]
                 if isinstance(batch_answers, list):
-                    all_answers.extend(batch_answers)
+                    # 🔥 嚴格截斷：AI 敢買一送四，我們就強制切掉多餘的！
+                    all_answers.extend(batch_answers[:current_count])
                     break 
                 else:
                     raise ValueError("JSON 格式不是陣列或字典")
@@ -133,14 +134,12 @@ def generate_answers(questions, persona, total_count):
         time.sleep(1) 
         
     status_text.text(f"✅ AI 數據生成完畢！共準備好 {len(all_answers)} 份資料。")
-    return all_answers
+    return all_answers[:total_count] # 最後一道保險，確保總數絕對不多不少
 
 # ================= 模組三：高落差亂數引擎與精準身分隔離 =================
 def get_smart_score(q_title, major, options):
-    # 打破平庸，0到10分全頻譜大亂跳
     score = random.choice([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     
-    # 科系極端偏好 (創造真實的波峰波谷)
     if "理學" in major or "工程" in major:
         if any(k in q_title for k in ["電腦", "邏輯", "科學", "力學", "電學", "工程", "數學"]): score = random.choice([8, 9, 10])
         elif any(k in q_title for k in ["文字", "藝術", "音樂", "繪畫"]): score = random.choice([0, 1, 2])
@@ -196,10 +195,8 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
             if "年級" in k:
                 gen_grade = str(v)
                 
-        # 判斷是否為畢業生
         is_graduate = "畢業" in gen_grade or "grad" in gen_grade.lower()
                 
-        # DSE 絕對發牌系統
         my_dse_subjects = dse_core + random.sample(dse_electives_pool, 2)
         dse_cards = ["3", "4", "4", "5", "5*", "5**"] 
         random.shuffle(dse_cards) 
@@ -209,7 +206,6 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
         for q in parsed_questions:
             q_title = q['title']
             
-            # 🔥 身分閘門：如果是在校學生，直接跳過所有帶有 [畢業生填寫] 的題目！
             if not is_graduate and "[畢業生填寫]" in q_title:
                 continue
             
@@ -244,7 +240,6 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 if ai_val:
                     base_payload[q['entry_id']] = ai_val
                 elif "五大職業" in q_title: 
-                    # 五大職業對所有人都必填，在校生填 NA，畢業生填隨機職業
                     base_payload[q['entry_id']] = "NA" if not is_graduate else random.choice(["資訊科技", "金融", "教育", "工程"])
                 elif "姓名" in q_title or "全名" in q_title: base_payload[q['entry_id']] = "張大X"
                 elif "編號" in q_title: base_payload[q['entry_id']] = "JS6963"
@@ -253,7 +248,6 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 elif "行業" in q_title or "職能" in q_title or "職位名稱" in q_title: base_payload[q['entry_id']] = random.choice(["資訊科技", "工程", "市場營銷", "金融"])
                 else: base_payload[q['entry_id']] = "NA"
 
-        # 提交程序
         init_res = session.get(form_url)
         fbzx_match = re.search(r'name="fbzx"\s+value="([^"]*)"', init_res.text)
         current_fbzx = fbzx_match.group(1) if fbzx_match else ""
