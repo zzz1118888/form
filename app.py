@@ -84,7 +84,6 @@ def generate_answers(questions, persona, total_count):
         current_count = min(batch_size, total_count - i)
         status_text.text(f"⏳ 正在與 AI 溝通生成數據... (目前進度: {i+1}/{total_count})")
         
-        # 🔥 擴充 AI 生成規則：加入 First Name, Last Name, 大學名稱
         prompt = f"""
         你現在是一個自動化數據生成引擎。請根據以下人設：【{persona}】
         為我生成 {current_count} 份 JSON 格式的基本資料。
@@ -191,14 +190,17 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
         gen_major = ""
         gen_grade = ""
         gen_year = ""
+        js_code = ""
         
         for k, v in flat_answers.items():
             if "學科" in k or "學系" in k: gen_major = str(v)
             if "年級" in k: gen_grade = str(v)
             if "年份" in k: gen_year = str(v)
+            if "編號" in k or "JS" in str(v).upper(): js_code = str(v).upper()
                 
         is_graduate = "畢業" in gen_grade or "grad" in gen_grade.lower()
         
+        # 強制接管邏輯：確保入學年份與年級 100% 精準對應
         if not is_graduate:
             if "2026" in gen_year: gen_grade = "Year 1"
             elif "2025" in gen_year: gen_grade = "Year 2"
@@ -216,6 +218,61 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
             for k in flat_answers.keys():
                 if "年級" in k: flat_answers[k] = gen_grade
                 if "年份" in k: flat_answers[k] = gen_year
+                
+        # 🔥 大學名稱與 SID 完美對應邏輯
+        sid_prefix = "2301"
+        uni_name = "香港大學"
+        if "JS6" in js_code: 
+            sid_prefix = random.choice(["3035", "3036"])
+            uni_name = "香港大學"
+        elif "JS4" in js_code:
+            sid_prefix = "1155"
+            uni_name = "香港中文大學"
+        elif "JS5" in js_code:
+            sid_prefix = gen_year if gen_year else "2023"
+            uni_name = "香港科技大學"
+        elif "JS1" in js_code:
+            sid_prefix = "5" + str(random.randint(100, 999))
+            uni_name = "香港城市大學"
+        elif "JS3" in js_code:
+            sid_prefix = (gen_year[-2:] if gen_year else "23") + str(random.randint(10, 99))
+            uni_name = "香港理工大學"
+        elif "JS2" in js_code:
+            sid_prefix = "2" + (gen_year[-1:] if gen_year else "3") + str(random.randint(10, 99))
+            uni_name = "香港浸會大學"
+        elif "JS8" in js_code:
+            sid_prefix = "11" + str(random.randint(10, 99))
+            uni_name = "香港教育大學"
+        elif "JS7" in js_code:
+            sid_prefix = "4" + str(random.randint(100, 999))
+            uni_name = "嶺南大學"
+        elif "JSSU" in js_code or "JS9" in js_code:
+            uni_name = "香港都會大學"
+            sid_prefix = str(random.randint(1000, 9999))
+        elif "JSSV" in js_code:
+            uni_name = "香港高等教育科技學院 (THEi)"
+            sid_prefix = str(random.randint(1000, 9999))
+        elif "JSSW" in js_code:
+            uni_name = "香港伍倫貢學院"
+            sid_prefix = str(random.randint(1000, 9999))
+        elif "JSSY" in js_code:
+            uni_name = "香港樹仁大學"
+            sid_prefix = str(random.randint(1000, 9999))
+        elif "JSST" in js_code:
+            uni_name = "東華學院"
+            sid_prefix = str(random.randint(1000, 9999))
+        elif "JSSH" in js_code:
+            uni_name = "香港恒生大學"
+            sid_prefix = str(random.randint(1000, 9999))
+        elif "JSSC" in js_code:
+            uni_name = "香港珠海學院"
+            sid_prefix = str(random.randint(1000, 9999))
+        elif "JSSA" in js_code:
+            uni_name = "聖方濟各大學"
+            sid_prefix = str(random.randint(1000, 9999))
+        else:
+            sid_prefix = str(random.randint(1000, 9999))
+            uni_name = "香港大學"
                 
         my_dse_subjects = dse_core + random.sample(dse_electives_pool, 2)
         dse_cards = ["3", "4", "4", "5", "5*", "5**"] 
@@ -271,15 +328,21 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                     else:
                         base_payload[q['entry_id']] = random.choice(q['options'])
             else:
-                # 🔥 新增欄位的專屬防呆處理機制
                 if ai_val:
                     base_payload[q['entry_id']] = ai_val
                 elif "First Name" in q_title or "first name" in q_title.lower():
                     base_payload[q['entry_id']] = random.choice(["Chris", "Alex", "Sam", "Pat", "Andy", "Jason", "Mary", "David", "Kelly"])
                 elif "Last name" in q_title or "last name" in q_title.lower():
                     base_payload[q['entry_id']] = random.choice(["Chan", "Wong", "Lee", "Cheung", "Ho", "Lam", "Yeung", "Lau"])
-                elif "大學名稱" in q_title or "大學" in q_title:
-                    base_payload[q['entry_id']] = random.choice(["香港大學", "香港中文大學", "香港科技大學", "香港理工大學", "香港城市大學", "香港浸會大學", "嶺南大學", "香港教育大學"])
+                elif "sid" in q_title.lower() or "前四個字符" in q_title or "學生編號" in q_title:
+                    # 🔥 自動填入精準的 SID 前四碼
+                    base_payload[q['entry_id']] = sid_prefix
+                elif "大學名稱" in q_title and "編號" not in q_title:
+                    # 🔥 自動填入精準的大學名稱
+                    base_payload[q['entry_id']] = uni_name
+                elif "email" in q_title.lower() or "電郵" in q_title or "郵箱" in q_title:
+                    fake_names = ["chris", "alex", "sam", "pat", "andy", "jason", "mary", "david", "kelly"]
+                    base_payload[q['entry_id']] = f"{random.choice(fake_names)}{random.randint(1000, 9999)}@gmail.com"
                 elif "五大職業" in q_title: 
                     base_payload[q['entry_id']] = random.choice(["資訊科技", "金融", "教育", "工程", "市場策劃", "公營機構"])
                 elif "姓名" in q_title or "全名" in q_title: 
@@ -319,7 +382,17 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
             if required_errors:
                 st.warning(f"Google 報錯訊息：{list(set(required_errors))}")
             else:
-                st.warning("⚠️ 提交失敗。Google 退回了表單，這通常代表有【必填題目未填寫】或是填寫格式不符。")
+                # 抓取表單內部的紅字錯誤
+                alerts = re.findall(r'<div[^>]*role="alert"[^>]*>(.*?)</div>', res.text, re.IGNORECASE | re.DOTALL)
+                clean_alerts = []
+                for a in alerts:
+                    clean_text = re.sub(r'<[^>]+>', '', a).strip()
+                    if clean_text: clean_alerts.append(clean_text)
+                
+                if clean_alerts:
+                    st.warning(f"⚠️ Google 隱藏報錯訊息：{list(set(clean_alerts))}")
+                else:
+                    st.warning("⚠️ 提交失敗。Google 退回了表單，這通常代表有【必填題目未填寫】或是填寫格式不符。")
                 
     wait_status.empty()
     return success_count
