@@ -84,19 +84,23 @@ def generate_answers(questions, persona, total_count):
         current_count = min(batch_size, total_count - i)
         status_text.text(f"⏳ 正在與 AI 溝通生成數據... (目前進度: {i+1}/{total_count})")
         
+        # 🔥 擴充 AI 生成規則：加入 First Name, Last Name, 大學名稱
         prompt = f"""
         你現在是一個自動化數據生成引擎。請根據以下人設：【{persona}】
         為我生成 {current_count} 份 JSON 格式的基本資料。
         
         【極度嚴格限制】：
-        1. 你 **只能** 輸出以下 5 個 Key：
+        1. 你 **只能** 輸出以下 8 個 Key：
+        - "First Name" (英文名字，例如 Chris, Mary)
+        - "Last name" (英文姓氏，例如 Chan, Wong)
         - "姓名（不用填寫姓名最後一個字，如陳大X）"
+        - "大學名稱" (請根據選中的學科填寫正確的大學名稱，如 香港大學)
         - "大學學科全名"
         - "大學學系編號"
         - "入學年份"
         - "年級"
         
-        請只輸出這 5 個欄位的 JSON 陣列。
+        請只輸出這 8 個欄位的 JSON 陣列。
         """
         
         max_retries = 3
@@ -195,7 +199,6 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 
         is_graduate = "畢業" in gen_grade or "grad" in gen_grade.lower()
         
-        # 強制接管邏輯：確保入學年份與年級 100% 精準對應
         if not is_graduate:
             if "2026" in gen_year: gen_grade = "Year 1"
             elif "2025" in gen_year: gen_grade = "Year 2"
@@ -223,7 +226,6 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
         for q in parsed_questions:
             q_title = q['title']
             
-            # 🔥 修正版：極度精準的畢業生題目過濾！絕不誤殺普通必填題！
             grad_keywords = [
                 "畢業生", "接駁廣泛職業型", "職業薪酬掛兌型", "大學輕鬆度過型", 
                 "興趣/目標大過天型", "注重大學品牌型", "成為專業人士型"
@@ -231,7 +233,6 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
             
             is_grad_q = any(kw in q_title for kw in grad_keywords)
             
-            # 如果是在校生，而且這題是專屬畢業生的，才直接跳過不填
             if not is_graduate and is_grad_q:
                 continue
             
@@ -270,11 +271,19 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                     else:
                         base_payload[q['entry_id']] = random.choice(q['options'])
             else:
+                # 🔥 新增欄位的專屬防呆處理機制
                 if ai_val:
                     base_payload[q['entry_id']] = ai_val
+                elif "First Name" in q_title or "first name" in q_title.lower():
+                    base_payload[q['entry_id']] = random.choice(["Chris", "Alex", "Sam", "Pat", "Andy", "Jason", "Mary", "David", "Kelly"])
+                elif "Last name" in q_title or "last name" in q_title.lower():
+                    base_payload[q['entry_id']] = random.choice(["Chan", "Wong", "Lee", "Cheung", "Ho", "Lam", "Yeung", "Lau"])
+                elif "大學名稱" in q_title or "大學" in q_title:
+                    base_payload[q['entry_id']] = random.choice(["香港大學", "香港中文大學", "香港科技大學", "香港理工大學", "香港城市大學", "香港浸會大學", "嶺南大學", "香港教育大學"])
                 elif "五大職業" in q_title: 
                     base_payload[q['entry_id']] = random.choice(["資訊科技", "金融", "教育", "工程", "市場策劃", "公營機構"])
-                elif "姓名" in q_title or "全名" in q_title: base_payload[q['entry_id']] = "張大X"
+                elif "姓名" in q_title or "全名" in q_title: 
+                    base_payload[q['entry_id']] = random.choice(["陳大X", "李小X", "張大X", "黃小X", "何大X"])
                 elif "編號" in q_title: base_payload[q['entry_id']] = "JS6963"
                 elif "月薪" in q_title or "收入" in q_title: base_payload[q['entry_id']] = str(random.randint(18000, 28000))
                 elif "時間" in q_title or "經驗" in q_title or "就業率" in q_title: base_payload[q['entry_id']] = "1"
