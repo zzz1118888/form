@@ -214,10 +214,16 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                 gen_year = random.choice(["2023", "2024", "2025", "2026"])
                 year_map = {"2026": "Year 1", "2025": "Year 2", "2024": "Year 3", "2023": "Year 4"}
                 gen_grade = year_map[gen_year]
+        else:
+            # 🔥 新增：畢業生專屬接管邏輯
+            gen_grade = "畢業生"
+            # 如果 AI 沒有生成年份，或者年份太新，強制修改為合理的畢業入學年份(2019-2022)
+            if not gen_year or not gen_year.isdigit() or int(gen_year) > 2022:
+                gen_year = str(random.choice(["2019", "2020", "2021", "2022"]))
                 
-            for k in flat_answers.keys():
-                if "年級" in k: flat_answers[k] = gen_grade
-                if "年份" in k: flat_answers[k] = gen_year
+        for k in flat_answers.keys():
+            if "年級" in k: flat_answers[k] = gen_grade
+            if "年份" in k: flat_answers[k] = gen_year
                 
         # 🔥 大學名稱與 SID 完美對應邏輯
         sid_prefix = "2301"
@@ -310,8 +316,13 @@ def submit_form(form_url, parsed_questions, answers, duration_hours):
                     matched_year = next((opt for opt in q['options'] if gen_year in opt), None)
                     base_payload[q['entry_id']] = matched_year if matched_year else random.choice([o for o in q['options'] if "20" in o] or q['options'])
                 elif "年級" in q_title:
-                    matched_grade = next((opt for opt in q['options'] if gen_grade in opt), None)
-                    base_payload[q['entry_id']] = matched_grade if matched_grade else random.choice([o for o in q['options'] if "Year" in o] or q['options'])
+                    # 🔥 修復 2: 針對畢業生與在校生分開處理 fallback，避免畢業生被塞回 Year 選項
+                    if is_graduate:
+                        matched_grade = next((opt for opt in q['options'] if any(kw in opt for kw in ["畢業", "Grad"])), None)
+                        base_payload[q['entry_id']] = matched_grade if matched_grade else random.choice([o for o in q['options'] if "Year" not in o] or q['options'])
+                    else:
+                        matched_grade = next((opt for opt in q['options'] if gen_grade in opt), None)
+                        base_payload[q['entry_id']] = matched_grade if matched_grade else random.choice([o for o in q['options'] if "Year" in o] or q['options'])
                 elif "DSE成績" in q_title:
                     matched_subj = next((s for s in my_dse_subjects if s in q_title), None)
                     if matched_subj:
